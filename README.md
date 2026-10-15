@@ -72,6 +72,10 @@ El entrenamiento corre en el cluster **Mendieta** del CCAD-UNC (GPU NVIDIA A30) 
 - [ ] Fases 3-4: prueba chica y pre-entrenamiento
 - [ ] Fases 5-8: espacio de conceptos, fine-tuning, interpretabilidad y ablaciones
 
+## Licencia
+
+El código del proyecto se distribuye con licencia [MIT](LICENSE). Los archivos de `src/labor2vec/modelo/` copiados de life2vec-light conservan su propia licencia MIT (© 2024 Germans Savcisens; ver `src/labor2vec/modelo/LICENSE_life2vec-light`). La licencia no cubre los datos de la MLER ni la documentación de `data/docs/`, que pertenecen al MTEySS y a sus autores.
+
 ## Referencias y créditos
 
 - Savcisens, G. et al. (2024). *Using sequences of life-events to predict human lives*. Nature Computational Science, 4, 43-56. <https://doi.org/10.1038/s43588-023-00573-5>
