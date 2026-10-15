@@ -1,0 +1,24 @@
+# Datos: nunca entran al repo (microdatos de personas, aun anonimizados)
+data/MLER.csv
+data/*.rar
+data/processed/
+*.parquet
+*.csv
+
+# Modelos, salidas y logs
+modelos/
+logs/
+lightning_logs/
+entorno/
+*.ckpt
+*.pt
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Editor
+.vscode/
