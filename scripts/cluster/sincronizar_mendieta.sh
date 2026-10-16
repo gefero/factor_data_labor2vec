@@ -24,7 +24,8 @@ subir)
     ;;
 datos)
     ssh "$USUARIO@$HOST" "mkdir -p $DEST/data/processed"
-    rsync -avz data/processed/ "$R/data/processed/"
+    # panel_base sólo es insumo intermedio de la fase 1; tmp_duckdb y *.tmp son temporales
+    rsync -avz --exclude panel_base.parquet --exclude tmp_duckdb --exclude '*.tmp' data/processed/ "$R/data/processed/"
     ;;
 bajar)
     mkdir -p logs/mendieta informes

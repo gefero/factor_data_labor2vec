@@ -67,7 +67,7 @@ El entrenamiento corre en el cluster **Mendieta** del CCAD-UNC (GPU NVIDIA A30) 
 
 - [x] Análisis de fuentes y plan general
 - [x] Fase 0: entorno, estructura y prueba en GPU ([informes/fase0.md](informes/fase0.md))
-- [ ] Fase 1: ingesta, validación y base de población
+- [x] Fase 1: ingesta, validación y base de población ([informes/fase1.md](informes/fase1.md))
 - [ ] Fase 2: tokenización y corpus
 - [ ] Fases 3-4: prueba chica y pre-entrenamiento
 - [ ] Fases 5-8: espacio de conceptos, fine-tuning, interpretabilidad y ablaciones
