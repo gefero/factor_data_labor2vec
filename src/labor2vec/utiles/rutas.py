@@ -21,3 +21,7 @@ TRABAJADORES = PROCESADOS / "trabajadores.parquet"
 RELACIONES = PROCESADOS / "relaciones.parquet"
 SPLITS = PROCESADOS / "splits.parquet"
 CORTES_SALARIO = PROCESADOS / "cortes_salario_mensual.parquet"
+
+CORPUS = PROCESADOS / "corpus"
+VOCABULARIO = CORPUS / "vocabulario.parquet"
+RAMAS = CORPUS / "ramas.parquet"

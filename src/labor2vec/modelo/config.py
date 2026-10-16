@@ -34,6 +34,8 @@ HPARAMS_PAPER = dict(
     epsilon=1e-6,
     cls_num_targs=3,
     mask_ratio=0.30,
+    n_tokens_fondo=5,                   # [CLS] + 3 tokens de fondo + [SEP]; labor2vec usa 4 (sexo y año de nacimiento)
+    sop_proporciones=(0.8, 0.1, 0.1),   # normal / invertido / mezclado; los de light. labor2vec: (0.9, 0.05, 0.05)
     epochs=30,
     steps_per_epoch=375,
 )

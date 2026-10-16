@@ -1,5 +1,5 @@
 # Copiado de carlomarxdk/life2vec-light (commit 9a0ef7a), src/transformer/embeddings.py
-# Licencia MIT, (c) 2024 Germans Savcisens. Cambios: sólo rutas de import.
+# Licencia MIT, (c) 2024 Germans Savcisens. Cambios: rutas de import y `n_tokens_fondo` parametrizable.
 
 import torch
 import torch.nn as nn
@@ -48,6 +48,8 @@ class Embeddings(nn.Module):
         self.res_abs = ReZero(hparams.hidden_size, simple=True, fill=0)
         self.res_seg = ReZero(hparams.hidden_size, simple=True, fill=0)
         self.dropout = nn.Dropout(hparams.emb_dropout)
+        # posiciones del background ([CLS] + tokens de fondo + [SEP]) sin información temporal; 5 en life2vec
+        self.n_fondo = hparams.get("n_tokens_fondo", 5)
 
     def parametrize(self, norm: bool = False):
         """Remove Mean from the Embedding Matrix (on each forward pass"""
@@ -68,11 +70,11 @@ class Embeddings(nn.Module):
         tokens = self.token(tokens)
 
         pos = self.age(age.float().unsqueeze(-1))
-        pos[:, :5] *= 0
+        pos[:, :self.n_fondo] *= 0
         tokens = self.res_age(tokens, pos)
 
         pos = self.abspos(position.float().unsqueeze(-1))
-        pos[:, :5] *= 0
+        pos[:, :self.n_fondo] *= 0
         tokens = self.res_abs(tokens, pos)
 
         if segment is not None:

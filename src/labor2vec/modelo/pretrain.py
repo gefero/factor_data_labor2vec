@@ -1,6 +1,6 @@
 # Copiado de carlomarxdk/life2vec-light (commit 9a0ef7a), src/models/pretrain.py
 # Licencia MIT, (c) 2024 Germans Savcisens. Cambios: rutas de import, pytorch_lightning -> lightning.pytorch
-# y calendario OneCycle parametrizable (por defecto, los valores originales: 30 épocas x 375 pasos).
+# `sop_proporciones` (pesos de clase de SOP) y calendario OneCycle parametrizable (por defecto, los valores originales: 30 épocas x 375 pasos).
 
 import torch
 import torch.nn as nn
@@ -43,8 +43,9 @@ class TransformerEncoder(pl.LightningModule):
             # Weighting for the loss functions
             self.register_buffer("sop_weight", torch.tensor(0.2))
             self.register_buffer("mlm_weight", torch.tensor(0.8))
-            self.register_buffer("sop_class_weight",
-                                 torch.tensor([1/0.8, 1/0.1, 1/0.1]))
+            # pesos de clase = inversa de la proporción de cada clase de SOP (por defecto, los de light)
+            props = self.hparams.get("sop_proporciones", (0.8, 0.1, 0.1))
+            self.register_buffer("sop_class_weight", torch.tensor([1 / p for p in props]))
             # Loss functions
             self.sop_loss = nn.CrossEntropyLoss(
                 weight=self.sop_class_weight, label_smoothing=0.1)
