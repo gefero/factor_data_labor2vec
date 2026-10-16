@@ -1,0 +1,32 @@
+# Prueba de humo en CPU: modelo chico sobre la muestra del 1 % (corpus_muestra), ~500 pasos.
+semilla: 0
+
+datos:
+  corpus: data/processed/corpus_muestra
+  fin_ventana: 239
+  eventos_compactos: false
+  max_length: 2560
+  tamano_lote: 32
+  num_workers: 0
+
+modelo:
+  sop_proporciones: [0.9, 0.05, 0.05]
+  hidden_size: 32
+  hidden_ff: 64
+  n_encoders: 2
+  n_heads: 4
+  n_local: 2
+  local_window_size: 8
+  num_random_features: 16
+  learning_rate: 0.003
+
+entrenamiento:
+  salida: runs/humo_cpu
+  precision: 32-true
+  epocas: 5
+  pasos_por_epoca: null
+  val_lotes: 20
+  clip_gradiente: null
+  guardar_cada_pasos: 100
+  log_cada_pasos: 10
+  muestra_unigrama: 4000

@@ -78,22 +78,27 @@ class DatasetPretrain(Dataset):
             self._rng, self._rng_semilla = np.random.default_rng(semilla), semilla
         return self._rng
 
-    def __getitem__(self, k: int) -> dict:
+    def documento(self, k: int, rng: np.random.Generator | None = None, augmentar: bool = False,
+                  con_sop: bool = False):
+        """Documento del trabajador `k` (sin enmascarar)."""
         i = self.indices[k]
-        rng = self._generador(k)
         c = self.corpus
-        doc = construir_documento(c.eventos(i, self.fin[i]), c.sexo[i], c.fnacim[i], self.vocab, self.tablas, self.op,
-                                  rng, augmentar=self.augmentar, con_sop=True)
+        return construir_documento(c.eventos(i, self.fin[i]), c.sexo[i], c.fnacim[i], self.vocab, self.tablas,
+                                   self.op, rng, augmentar=augmentar, con_sop=con_sop)
+
+    def __getitem__(self, k: int) -> dict:
+        rng = self._generador(k)
+        doc = self.documento(k, rng, self.augmentar, con_sop=True)
         tokens, pos, obj = enmascarar(doc.tokens, len(self.vocab), self.op.mask_ratio, rng)
         doc.tokens = tokens
         return {"input_ids": doc.como_matriz(), "target_pos": pos, "target_tokens": obj, "target_sop": doc.sop}
 
 
-def collate(muestras: list[dict], max_length: int, multiplo: int = MULTIPLO) -> dict:
+def collate(muestras: list[dict], max_length: int, multiplo: int = MULTIPLO, mask_ratio: float = 0.3) -> dict:
     """Rellena hasta el largo máximo del lote (redondeado a `multiplo`, sin pasar de `max_length`)."""
     largo = max(m["input_ids"].shape[1] for m in muestras)
     L = min(-(-largo // multiplo) * multiplo, max_length)
-    n_mask = max(1, int(np.floor(0.3 * L)))
+    n_mask = max(1, int(np.floor(mask_ratio * L)))
     n = len(muestras)
     ids = np.zeros((n, 4, L), dtype=np.int64)
     padding = np.zeros((n, L), dtype=bool)
@@ -116,10 +121,10 @@ class SamplerPorLargo(torch.utils.data.Sampler):
     se ordenan por largo dentro de cada uno y se parten en lotes, que se mezclan de nuevo."""
 
     def __init__(self, largos: np.ndarray, tamano: int, mega: int = 50, mezclar: bool = True, semilla: int = 0,
-                 descartar_ultimo: bool = False):
+                 descartar_ultimo: bool = False, epoca_fija: bool = False):
         self.largos, self.tamano, self.mega = np.asarray(largos), tamano, mega
         self.mezclar, self.semilla, self.descartar = mezclar, semilla, descartar_ultimo
-        self.epoca = 0
+        self.epoca, self.epoca_fija = 0, epoca_fija  # epoca_fija: mismo orden en cada pasada (validación)
 
     def set_epoch(self, epoca: int) -> None:
         self.epoca = epoca
@@ -138,7 +143,8 @@ class SamplerPorLargo(torch.utils.data.Sampler):
             lotes.pop()
         if self.mezclar:
             lotes = [lotes[i] for i in rng.permutation(len(lotes))]
-        self.epoca += 1
+        if not self.epoca_fija:
+            self.epoca += 1
         yield from lotes
 
     def __len__(self):
@@ -148,11 +154,12 @@ class SamplerPorLargo(torch.utils.data.Sampler):
 
 class DataModuleMLER(pl.LightningDataModule):
     def __init__(self, corpus=CORPUS, vocab: Vocabulario | None = None, op: Opciones | None = None,
-                 tamano_lote: int = 32, num_workers: int = 4, semilla: int = 0):
+                 tamano_lote: int = 32, num_workers: int = 4, semilla: int = 0, epoca_inicial: int = 0):
         super().__init__()
         self.corpus, self.op = Path(corpus), op or Opciones()
         self.vocab = vocab or Vocabulario.cargar(self.corpus / "vocabulario.parquet", self.corpus / "ramas.parquet")
         self.tamano, self.num_workers, self.semilla = tamano_lote, num_workers, semilla
+        self.epoca_inicial = epoca_inicial  # para reanudar con el orden de lotes que correspondía
 
     def setup(self, stage=None):
         self.ds = {s: DatasetPretrain(self.corpus / f"eventos_{s}", self.vocab, self.op, augmentar=(s == "train"),
@@ -161,10 +168,13 @@ class DataModuleMLER(pl.LightningDataModule):
 
     def _loader(self, split: str, entrenar: bool) -> DataLoader:
         ds = self.ds[split]
-        sampler = SamplerPorLargo(ds.largos(), self.tamano, mezclar=entrenar, semilla=self.semilla,
-                                  descartar_ultimo=entrenar)
+        # validación y test: orden mezclado pero fijo, así un subconjunto de lotes es siempre el mismo y representativo
+        sampler = SamplerPorLargo(ds.largos(), self.tamano, mezclar=True, semilla=self.semilla,
+                                  descartar_ultimo=entrenar, epoca_fija=not entrenar)
+        if entrenar:
+            sampler.set_epoch(self.epoca_inicial)
         return DataLoader(ds, batch_sampler=sampler, num_workers=self.num_workers,
-                          collate_fn=partial(collate, max_length=self.op.max_length),
+                          collate_fn=partial(collate, max_length=self.op.max_length, mask_ratio=self.op.mask_ratio),
                           persistent_workers=self.num_workers > 0, pin_memory=torch.cuda.is_available())
 
     def train_dataloader(self):

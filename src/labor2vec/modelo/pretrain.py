@@ -50,6 +50,11 @@ class TransformerEncoder(pl.LightningModule):
             self.sop_loss = nn.CrossEntropyLoss(
                 weight=self.sop_class_weight, label_smoothing=0.1)
             self.mlm_loss = nn.CrossEntropyLoss(ignore_index=0)
+            # log-probabilidades unigrama (línea de base del MLM); se completan con `fijar_unigrama`
+            self.register_buffer("logp_unigrama", torch.zeros(self.hparams.vocab_size))
+            self.recall_sop = torchmetrics.classification.MulticlassRecall(
+                num_classes=self.hparams.cls_num_targs, average=None)
+            self._acum = {}
         else:
             raise NotImplementedError()
 
@@ -69,20 +74,71 @@ class TransformerEncoder(pl.LightningModule):
         return mlm_pred, sop_pred
 
     def calculate_total_loss(self, mlm_preds, sop_preds, batch):
+        return self.calcular_perdidas(mlm_preds, sop_preds, batch)["total"]
+
+    def calcular_perdidas(self, mlm_preds, sop_preds, batch) -> dict:
         mlm_targs = batch["target_tokens"].long()
         sop_targs = batch["target_sop"].long()
         mlm_loss = self.mlm_loss(mlm_preds.permute(0, 2, 1), target=mlm_targs)
         sop_loss = self.sop_loss(sop_preds, target=sop_targs)
+        total = self.sop_weight * sop_loss + self.mlm_weight * mlm_loss
+        return {"total": total, "mlm": mlm_loss, "sop": sop_loss}
 
-        total_loss = self.sop_weight * sop_loss + self.mlm_weight * mlm_loss
-        return total_loss
+    def fijar_unigrama(self, logp: torch.Tensor) -> None:
+        """Log-probabilidades unigrama sobre el vocabulario, para comparar la perplejidad del MLM."""
+        self.logp_unigrama.copy_(logp)
+
+    @torch.no_grad()
+    def _metricas(self, mlm_preds, sop_preds, batch) -> dict:
+        """Sumas sobre las posiciones enmascaradas del lote (el relleno tiene objetivo 0)."""
+        targs = batch["target_tokens"].long()
+        valido = targs != 0
+        t = targs[valido]
+        logits = mlm_preds[valido].float()
+        nll = F.cross_entropy(logits, t, reduction="sum")
+        return {
+            "n": valido.sum().to(nll.dtype),
+            "nll": nll,
+            "nll_unigrama": -self.logp_unigrama[t].sum(),
+            "aciertos": (logits.argmax(-1) == t).sum().to(nll.dtype),
+            "sop_ok": (sop_preds.argmax(-1) == batch["target_sop"].long()).sum().to(nll.dtype),
+            "n_sop": torch.tensor(float(len(sop_preds)), device=nll.device),
+        }
 
     def training_step(self, batch, batch_idx):
         """Training Step"""
-        # 1. ENCODER-DECODER
         mlm_preds, sop_preds = self(batch)
-        # 2. LOSS
-        return self.calculate_total_loss(mlm_preds, sop_preds, batch)
+        perd = self.calcular_perdidas(mlm_preds, sop_preds, batch)
+        m = self._metricas(mlm_preds, sop_preds, batch)
+        n = len(batch["target_sop"])
+        self.log_dict({"train/loss": perd["total"], "train/mlm_loss": perd["mlm"], "train/sop_loss": perd["sop"],
+                       "train/mlm_acc": m["aciertos"] / m["n"].clamp(min=1),
+                       "train/sop_acc": m["sop_ok"] / m["n_sop"]},
+                      on_step=True, on_epoch=False, batch_size=n, prog_bar=False)
+        return perd["total"]
+
+    def _paso_evaluacion(self, batch, etapa: str):
+        mlm_preds, sop_preds = self(batch)
+        perd = self.calcular_perdidas(mlm_preds, sop_preds, batch)
+        m = self._metricas(mlm_preds, sop_preds, batch)
+        for k, v in m.items():
+            self._acum[k] = self._acum.get(k, 0) + v
+        self._acum["sop_loss"] = self._acum.get("sop_loss", 0) + perd["sop"].detach() * m["n_sop"]
+        self.recall_sop.update(sop_preds.argmax(-1), batch["target_sop"].long())
+        return perd["total"]
+
+    def _fin_evaluacion(self, etapa: str) -> None:
+        a, n = self._acum, self._acum["n"].clamp(min=1)
+        mlm = a["nll"] / n
+        self.log_dict({f"{etapa}/mlm_loss": mlm, f"{etapa}/mlm_ppl": mlm.exp(),
+                       f"{etapa}/mlm_acc": a["aciertos"] / n,
+                       f"{etapa}/ppl_unigrama": (a["nll_unigrama"] / n).exp(),
+                       f"{etapa}/sop_loss": a["sop_loss"] / a["n_sop"],
+                       f"{etapa}/sop_acc": a["sop_ok"] / a["n_sop"]})
+        for c, r in enumerate(self.recall_sop.compute()):
+            self.log(f"{etapa}/sop_recall_c{c}", r)
+        self.recall_sop.reset()
+        self._acum = {}
 
     def on_train_epoch_end(self, *kwargs):
         """On Train Epoch End: Redraw the projection of the Attention-related matrices"""
@@ -93,17 +149,26 @@ class TransformerEncoder(pl.LightningModule):
                 "We only have a Performer implementation.")
 
     def validation_step(self, batch, batch_idx):
-        """Validation Step"""
-        # 1. ENCODER-DECODER
-        mlm_preds, sop_preds = self(batch)
-        # 2. LOSS
-        return self.calculate_total_loss(mlm_preds, sop_preds, batch)
+        return self._paso_evaluacion(batch, "val")
+
+    def on_validation_epoch_start(self):
+        self._acum = {}
+        self.recall_sop.reset()
+
+    def on_validation_epoch_end(self):
+        if self._acum:  # no hay nada si Lightning hace la comprobación previa sin lotes
+            self._fin_evaluacion("val")
 
     def test_step(self, batch, batch_idx):
-        # 1. ENCODER-DECODER
-        mlm_preds, sop_preds = self(batch)
-        # 2. LOSS
-        return self.calculate_total_loss(mlm_preds, sop_preds, batch)
+        return self._paso_evaluacion(batch, "test")
+
+    def on_test_epoch_start(self):
+        self._acum = {}
+        self.recall_sop.reset()
+
+    def on_test_epoch_end(self):
+        if self._acum:
+            self._fin_evaluacion("test")
 
     def configure_optimizers(self):
         """Configuration of the Optimizer and the Learning Rate Scheduler."""
