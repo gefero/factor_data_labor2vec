@@ -35,7 +35,7 @@ HPARAMS_PAPER = dict(
     cls_num_targs=3,
     mask_ratio=0.30,
     n_tokens_fondo=5,                   # [CLS] + 3 tokens de fondo + [SEP]; labor2vec usa 4 (sexo y año de nacimiento)
-    sop_proporciones=(0.8, 0.1, 0.1),   # normal / invertido / mezclado; los de light. labor2vec: (0.9, 0.05, 0.05)
+    sop_pesos=(1 / 0.9, 10.0, 10.0),    # pesos de clase de SOP (normal / invertido / mezclado), como el repo completo de life2vec
     epochs=30,
     steps_per_epoch=375,
 )

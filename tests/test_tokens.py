@@ -213,7 +213,7 @@ def test_datamodule_y_un_paso_del_modelo(mundo):
     dm.setup()
     lote = next(iter(dm.train_dataloader()))
     hp = hparams(HPARAMS_MINIMO, vocab_size=len(v), max_length=128, n_tokens_fondo=N_FONDO,
-                 sop_proporciones=(0.9, 0.05, 0.05))
+                 sop_pesos=(1 / 0.9, 10.0, 10.0))
     torch.manual_seed(0)
     modelo = TransformerEncoder(hp)
     opt = torch.optim.AdamW(modelo.parameters(), lr=3e-3)

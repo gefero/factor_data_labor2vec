@@ -1,6 +1,6 @@
 # Copiado de carlomarxdk/life2vec-light (commit 9a0ef7a), src/models/pretrain.py
 # Licencia MIT, (c) 2024 Germans Savcisens. Cambios: rutas de import, pytorch_lightning -> lightning.pytorch
-# `sop_proporciones` (pesos de clase de SOP) y calendario OneCycle parametrizable (por defecto, los valores originales: 30 épocas x 375 pasos).
+# `sop_pesos` (pesos de clase de SOP), AUC de SOP y calendario OneCycle parametrizable (por defecto, los valores originales: 30 épocas x 375 pasos).
 
 import torch
 import torch.nn as nn
@@ -43,9 +43,9 @@ class TransformerEncoder(pl.LightningModule):
             # Weighting for the loss functions
             self.register_buffer("sop_weight", torch.tensor(0.2))
             self.register_buffer("mlm_weight", torch.tensor(0.8))
-            # pesos de clase = inversa de la proporción de cada clase de SOP (por defecto, los de light)
-            props = self.hparams.get("sop_proporciones", (0.8, 0.1, 0.1))
-            self.register_buffer("sop_class_weight", torch.tensor([1 / p for p in props]))
+            # pesos de clase de SOP (por defecto, los de light; el repo completo de life2vec usa 1/0.9, 10, 10)
+            pesos = self.hparams.get("sop_pesos", (1 / 0.8, 1 / 0.1, 1 / 0.1))
+            self.register_buffer("sop_class_weight", torch.tensor([float(p) for p in pesos]))
             # Loss functions
             self.sop_loss = nn.CrossEntropyLoss(
                 weight=self.sop_class_weight, label_smoothing=0.1)
@@ -54,6 +54,7 @@ class TransformerEncoder(pl.LightningModule):
             self.register_buffer("logp_unigrama", torch.zeros(self.hparams.vocab_size))
             self.recall_sop = torchmetrics.classification.MulticlassRecall(
                 num_classes=self.hparams.cls_num_targs, average=None)
+            self.auc_sop = torchmetrics.classification.BinaryAUROC()
             self._acum = {}
         else:
             raise NotImplementedError()
@@ -125,6 +126,8 @@ class TransformerEncoder(pl.LightningModule):
             self._acum[k] = self._acum.get(k, 0) + v
         self._acum["sop_loss"] = self._acum.get("sop_loss", 0) + perd["sop"].detach() * m["n_sop"]
         self.recall_sop.update(sop_preds.argmax(-1), batch["target_sop"].long())
+        # AUC de «perturbado contra normal» con 1 - P(normal): no depende de ningún umbral
+        self.auc_sop.update(1 - sop_preds.float().softmax(-1)[:, 0], (batch["target_sop"] != 0).long())
         return perd["total"]
 
     def _fin_evaluacion(self, etapa: str) -> None:
@@ -138,6 +141,8 @@ class TransformerEncoder(pl.LightningModule):
         for c, r in enumerate(self.recall_sop.compute()):
             self.log(f"{etapa}/sop_recall_c{c}", r)
         self.recall_sop.reset()
+        self.log(f"{etapa}/sop_auc", self.auc_sop.compute())
+        self.auc_sop.reset()
         self._acum = {}
 
     def on_train_epoch_end(self, *kwargs):
@@ -154,6 +159,7 @@ class TransformerEncoder(pl.LightningModule):
     def on_validation_epoch_start(self):
         self._acum = {}
         self.recall_sop.reset()
+        self.auc_sop.reset()
 
     def on_validation_epoch_end(self):
         if self._acum:  # no hay nada si Lightning hace la comprobación previa sin lotes
@@ -165,6 +171,7 @@ class TransformerEncoder(pl.LightningModule):
     def on_test_epoch_start(self):
         self._acum = {}
         self.recall_sop.reset()
+        self.auc_sop.reset()
 
     def on_test_epoch_end(self):
         if self._acum:

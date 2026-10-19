@@ -10,7 +10,7 @@ datos:
   num_workers: 0
 
 modelo:
-  sop_proporciones: [0.9, 0.05, 0.05]
+  sop_pesos: [1.1111111, 10.0, 10.0]
   hidden_size: 32
   hidden_ff: 64
   n_encoders: 2

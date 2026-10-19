@@ -1,4 +1,6 @@
-# Pre-entrenamiento MLM + SOP. Se sobrescribe desde la línea de comandos: --set entrenamiento.epocas=5
+# Pre-entrenamiento MLM + SOP (fase 4). Se sobrescribe desde la línea de comandos: --set entrenamiento.epocas=5
+# Calendario como el repo completo de life2vec: 375 pasos del optimizador por época con lote efectivo 64
+# (24.000 secuencias), 30 épocas = 720.000 secuencias, recorte de gradiente 1,0, validación cada 3 épocas.
 semilla: 0
 
 datos:
@@ -6,20 +8,22 @@ datos:
   fin_ventana: 239            # último mes_idx incluido (239 = 2015-12); null = toda la historia
   eventos_compactos: false    # variante B
   max_length: 2560
-  tamano_lote: 64
-  num_workers: 4              # 10 cores por GPU en Mendieta; 0 en las pruebas locales
+  tamano_lote: 32             # el mayor que entra en la A30 en el peor caso (18 GiB en bf16)
+  num_workers: 9              # 10 cores por GPU en Mendieta; 0 en las pruebas locales
 
 # Sobrescribe HPARAMS_PAPER (modelo/config.py). vocab_size y n_tokens_fondo salen del vocabulario y del documento.
 modelo:
-  sop_proporciones: [0.9, 0.05, 0.05]   # normal / invertido / mezclado
+  sop_pesos: [1.1111111, 10.0, 10.0]   # como el repo completo de life2vec: [1/0,9, 1/0,1, 1/0,1]
 
 entrenamiento:
   salida: runs/preentrenamiento
   precision: bf16-mixed       # 32-true | bf16-mixed
-  epocas: 3                   # una época = una pasada por train; el calendario final se fija en la fase 4
-  pasos_por_epoca: null       # tope de pasos por época (null = pasada completa)
-  val_cada_pasos: null        # validar cada N pasos (null = al final de cada época)
-  val_lotes: 200              # lotes de validación por época (null = todos)
+  acumular: 2                 # lote efectivo = tamano_lote x acumular = 64
+  epocas: 30
+  pasos_por_epoca: 375        # pasos del optimizador (24.000 secuencias)
+  val_cada_epocas: 3
+  val_cada_pasos: null        # alternativa a val_cada_epocas, en pasos del optimizador
+  val_lotes: 200              # lotes de validación (de tamano_lote) por validación; null = todos
   clip_gradiente: 1.0         # como life2vec (gradient_clip_val: 1.0)
   guardar_cada_pasos: 500
   log_cada_pasos: 10

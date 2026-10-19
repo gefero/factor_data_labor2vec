@@ -26,7 +26,7 @@ def test_unigrama_suma_uno_y_excluye_especiales(mundo):
 
 def _modelo_chico(v, logp=None):
     hp = hparams(HPARAMS_MINIMO, vocab_size=len(v), max_length=128, n_tokens_fondo=4,
-                 sop_proporciones=(0.9, 0.05, 0.05))
+                 sop_pesos=(1 / 0.9, 10.0, 10.0))
     torch.manual_seed(0)
     m = TransformerEncoder(hp)
     if logp is not None:
@@ -118,3 +118,71 @@ def test_el_camino_de_entrenamiento_no_importa_polars():
     codigo = ("import sys, labor2vec.entrenar, labor2vec.tokens.datos, labor2vec.tokens.vocabulario, "
               "labor2vec.tokens.corpus; sys.exit(1 if 'polars' in sys.modules else 0)")
     assert subprocess.run([sys.executable, "-I", "-c", codigo]).returncode == 0
+
+
+# ---- fase 4: acumulación, pesos de SOP, AUC, corte y reanudación -----------------------------------------------
+def test_pesos_de_sop_por_hiperparametro(mundo):
+    m = _modelo_chico(mundo["vocab"])
+    assert torch.allclose(m.sop_class_weight, torch.tensor([1 / 0.9, 10.0, 10.0]))
+
+
+def test_auc_de_sop_a_mano(mundo):
+    """AUC de «perturbado contra normal»: 1 con una cabeza perfecta, 0,5 con salidas constantes."""
+    m = _modelo_chico(mundo["vocab"])
+    objetivos = torch.tensor([0, 0, 1, 2, 0, 1])
+    perfecta = torch.nn.functional.one_hot(objetivos, 3).float() * 10
+    m.auc_sop.update(1 - perfecta.softmax(-1)[:, 0], (objetivos != 0).long())
+    assert m.auc_sop.compute() == pytest.approx(1.0)
+    m.auc_sop.reset()
+    m.auc_sop.update(1 - torch.zeros(6, 3).softmax(-1)[:, 0], (objetivos != 0).long())
+    assert m.auc_sop.compute() == pytest.approx(0.5)
+
+
+def _config_acum(mundo, tmp_path, **extra):
+    import yaml
+    cfg = cargar_config("configs/humo_cpu.yaml", [
+        f"datos.corpus={mundo['salida']}", "datos.tamano_lote=4", "datos.max_length=128", "entrenamiento.epocas=2",
+        "entrenamiento.pasos_por_epoca=3", "entrenamiento.acumular=2", "entrenamiento.val_lotes=2",
+        "entrenamiento.guardar_cada_pasos=2", "entrenamiento.muestra_unigrama=20", "entrenamiento.clip_gradiente=1.0",
+        f"entrenamiento.salida={tmp_path / 'run'}", *[f"{k}={v}" for k, v in extra.items()]])
+    ruta = tmp_path / "cfg.yaml"
+    ruta.write_text(yaml.safe_dump(cfg))
+    return ruta
+
+
+def test_acumulacion_cuenta_pasos_del_optimizador(mundo, tmp_path):
+    ruta = _config_acum(mundo, tmp_path)
+    main(["--config", str(ruta)])
+    ck = torch.load(tmp_path / "run" / "last.ckpt", map_location="cpu", weights_only=False)
+    assert ck["global_step"] == 6 and ck["epoch"] == 2  # 2 épocas x 3 pasos del optimizador (= 12 micro-lotes)
+    assert (tmp_path / "run" / "modelo_final.pt").exists()
+    # el calendario OneCycle se calculó con pasos del optimizador
+    assert ck["hyper_parameters"]["steps_per_epoch"] == 3
+    f = torch.load(tmp_path / "run" / "modelo_final.pt", map_location="cpu", weights_only=False)
+    assert set(f) == {"state_dict", "hparams"}
+
+
+def test_corte_y_reanudacion_con_acumulacion(mundo, tmp_path):
+    ruta = _config_acum(mundo, tmp_path)
+    run = tmp_path / "run"
+    main(["--config", str(ruta), "--max-pasos", "4"])
+    ck = torch.load(run / "last.ckpt", map_location="cpu", weights_only=False)
+    assert ck["global_step"] == 4  # corta entre pasos del optimizador, no a mitad de una acumulación
+    assert not (run / "modelo_final.pt").exists()
+    main(["--config", str(ruta), "--reanudar"])
+    ck2 = torch.load(run / "last.ckpt", map_location="cpu", weights_only=False)
+    assert ck2["global_step"] == 6 and (run / "modelo_final.pt").exists()
+
+
+def test_la_perdida_no_finita_corta_con_error(mundo, tmp_path, monkeypatch):
+    ruta = _config_acum(mundo, tmp_path)
+    original = TransformerEncoder.calcular_perdidas
+
+    def con_nan(self, *a, **k):
+        d = original(self, *a, **k)
+        d["total"] = d["total"] * float("nan")
+        return d
+
+    monkeypatch.setattr(TransformerEncoder, "calcular_perdidas", con_nan)
+    with pytest.raises(FloatingPointError):
+        main(["--config", str(ruta)])
