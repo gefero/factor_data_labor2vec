@@ -14,7 +14,8 @@
 # Para el límite de tiempo se calcula cuánto le queda al job (squeue %e) menos un margen (5 min si el job dura
 # <= 1 h, 15 min si dura más) y se lo pasa a --max-minutos: el entrenamiento guarda y sale con código 0
 # (el job termina COMPLETED, no TIMEOUT). Variable opcional: CORTE_PRUEBA=N corta en el paso N y reanuda dentro
-# del mismo job (prueba de reanudación en la GPU; sbatch --export=ALL,CORTE_PRUEBA=1500 ...).
+# del mismo job (prueba de reanudación en la GPU). Pasarla por el entorno del envío: `CORTE_PRUEBA=1500 sbatch ...`;
+# NO con `sbatch --export=ALL,VAR=...`: el job 1180677 quedó retenido con «user env retrieval failed requeued held».
 #SBATCH --job-name=l2v_pre
 #SBATCH --partition=short
 #SBATCH --nodes=1
