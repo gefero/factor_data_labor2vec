@@ -108,3 +108,13 @@ def test_entrenar_se_detiene_por_tiempo(mundo, tmp_path):
     main(["--config", str(ruta), "--set", "entrenamiento.epocas=1000", "--max-minutos", "0.02"])
     ck = torch.load(tmp_path / "run" / "last.ckpt", map_location="cpu", weights_only=False)
     assert 0 < ck["global_step"] < 3000
+
+
+def test_el_camino_de_entrenamiento_no_importa_polars():
+    """El binario de polars exige AVX2 y los nodos de Mendieta no lo tienen (Illegal instruction)."""
+    import subprocess
+    import sys
+
+    codigo = ("import sys, labor2vec.entrenar, labor2vec.tokens.datos, labor2vec.tokens.vocabulario, "
+              "labor2vec.tokens.corpus; sys.exit(1 if 'polars' in sys.modules else 0)")
+    assert subprocess.run([sys.executable, "-I", "-c", codigo]).returncode == 0

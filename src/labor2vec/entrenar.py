@@ -47,6 +47,27 @@ class ParadaSegura(pl.Callback):
             trainer.should_stop = True
 
 
+class Rendimiento(pl.Callback):
+    """Registra secuencias/s, tokens/s (con relleno) y memoria pico de la GPU cada `cada` pasos."""
+
+    def __init__(self, cada: int):
+        self.cada, self.t, self.seqs, self.toks = cada, None, 0, 0
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        n, _, L = batch["input_ids"].shape
+        self.seqs, self.toks = self.seqs + n, self.toks + n * L
+        if self.t is None:  # el primer intervalo incluye el arranque (cuDNN, caché): se descarta
+            self.t, self.seqs, self.toks = time.time(), 0, 0
+            return
+        if trainer.global_step % self.cada == 0:
+            dt = time.time() - self.t
+            m = {"perf/seq_s": self.seqs / dt, "perf/tokens_s": self.toks / dt, "perf/pasos_s": self.cada / dt}
+            if torch.cuda.is_available():
+                m["perf/mem_pico_gib"] = torch.cuda.max_memory_allocated() / 2**30
+            pl_module.log_dict(m, on_step=True, on_epoch=False, batch_size=n)
+            self.t, self.seqs, self.toks = time.time(), 0, 0
+
+
 def _ruta(p) -> Path:
     p = Path(p)
     return p if p.is_absolute() else RAIZ / p
@@ -119,8 +140,8 @@ def main(argv=None) -> None:
     trainer = pl.Trainer(
         max_epochs=e["epocas"], precision=e["precision"], accelerator="auto", devices=1,
         limit_train_batches=e.get("pasos_por_epoca") or 1.0, limit_val_batches=e.get("val_lotes") or 1.0,
-        gradient_clip_val=e.get("clip_gradiente"), log_every_n_steps=e["log_cada_pasos"],
-        callbacks=[*ckpts, parada, LearningRateMonitor("step")], logger=CSVLogger(salida, name="logs"),
+        val_check_interval=e.get("val_cada_pasos") or 1.0, gradient_clip_val=e.get("clip_gradiente"), log_every_n_steps=e["log_cada_pasos"],
+        callbacks=[*ckpts, parada, Rendimiento(e["log_cada_pasos"]), LearningRateMonitor("step")], logger=CSVLogger(salida, name="logs"),
         enable_progress_bar=False, num_sanity_val_steps=0, default_root_dir=salida)
     t0 = time.time()
     trainer.fit(modelo, datamodule=dm, ckpt_path=str(last) if retomar else None)

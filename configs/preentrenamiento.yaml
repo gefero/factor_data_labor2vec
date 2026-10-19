@@ -18,6 +18,7 @@ entrenamiento:
   precision: bf16-mixed       # 32-true | bf16-mixed
   epocas: 3                   # una época = una pasada por train; el calendario final se fija en la fase 4
   pasos_por_epoca: null       # tope de pasos por época (null = pasada completa)
+  val_cada_pasos: null        # validar cada N pasos (null = al final de cada época)
   val_lotes: 200              # lotes de validación por época (null = todos)
   clip_gradiente: null
   guardar_cada_pasos: 500

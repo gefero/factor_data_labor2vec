@@ -1,6 +1,7 @@
 """Vocabulario de la MLER, ajustado sólo con train.
 
-Orden de los especiales idéntico al de life2vec-light, para no tocar los `ignore_index = [0,4,5,6,7,8]` del
+No usa polars: su binario necesita AVX2 y los nodos de Mendieta (Ivy Bridge) no lo tienen (`Illegal instruction`
+al importarlo, 2026-10-16); este módulo está en el camino del entrenamiento. Orden de los especiales idéntico al de life2vec-light, para no tocar los `ignore_index = [0,4,5,6,7,8]` del
 backbone. Las tablas de búsqueda (`tablas`) convierten códigos crudos del corpus de eventos (con -1 = dato
 faltante) en ids de token; lo faltante pasa a [UNK].
 
@@ -10,7 +11,8 @@ faltante) en ids de token; lo faltante pasa a [UNK].
 from dataclasses import dataclass, field
 
 import numpy as np
-import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from labor2vec.utiles.duck import conectar
 from labor2vec.utiles.rutas import PANEL, RAMAS, VOCABULARIO
@@ -32,7 +34,7 @@ class Vocabulario:
     tokens: list[str]
     categorias: list[str]
     frecuencias: list[int]
-    ramas: pl.DataFrame  # r34, r32, n_trab_train, token
+    ramas: pa.Table  # r34, r32, n_trab_train, token
     nac_min: int = 0
     nac_max: int = 0
     _id: dict[str, int] = field(default_factory=dict, repr=False)
@@ -57,10 +59,10 @@ class Vocabulario:
 
     def tablas(self) -> dict[str, np.ndarray]:
         """LUT por variable. Se indexan con `codigo + 1`; ver `buscar`."""
-        r = self.ramas
-        rama = np.full(int(r["r34"].max()) + 2, UNK, dtype=np.int32)
-        for r34, r32, n, tok in r.iter_rows():
-            rama[r34 + 1] = self.id(tok)
+        filas = self.ramas.to_pylist()
+        rama = np.full(max(f["r34"] for f in filas) + 2, UNK, dtype=np.int32)
+        for f in filas:
+            rama[f["r34"] + 1] = self.id(f["token"])
         provs = [int(t[5:]) for t, c in zip(self.tokens, self.categorias) if c == "provincia"]
         return {
             "rem": self._lut(range(0, 101), lambda c: f"REM_{c:03d}"),
@@ -78,19 +80,17 @@ class Vocabulario:
     # ---- persistencia ------------------------------------------------------------------------------
     def guardar(self, ruta=VOCABULARIO, ruta_ramas=RAMAS) -> None:
         ruta.parent.mkdir(parents=True, exist_ok=True)
-        pl.DataFrame(
-            {"token": self.tokens, "id": range(len(self.tokens)), "categoria": self.categorias,
-             "frecuencia": self.frecuencias},
-            schema_overrides={"id": pl.Int32, "frecuencia": pl.Int64},
-        ).write_parquet(ruta)
-        self.ramas.write_parquet(ruta_ramas)
+        pq.write_table(pa.table({
+            "token": pa.array(self.tokens, pa.string()), "id": pa.array(range(len(self.tokens)), pa.int32()),
+            "categoria": pa.array(self.categorias, pa.string()),
+            "frecuencia": pa.array(self.frecuencias, pa.int64())}), ruta)
+        pq.write_table(self.ramas, ruta_ramas)
 
     @classmethod
     def cargar(cls, ruta=VOCABULARIO, ruta_ramas=RAMAS) -> "Vocabulario":
-        v = pl.read_parquet(ruta).sort("id")
+        v = pq.read_table(ruta).sort_by("id").to_pydict()
         nac = [int(t[4:]) for t, c in zip(v["token"], v["categoria"]) if c == "nacimiento"]
-        return cls(v["token"].to_list(), v["categoria"].to_list(), v["frecuencia"].to_list(),
-                   pl.read_parquet(ruta_ramas), min(nac), max(nac))
+        return cls(v["token"], v["categoria"], v["frecuencia"], pq.read_table(ruta_ramas), min(nac), max(nac))
 
     # ---- ajuste ------------------------------------------------------------------------------------
     @classmethod
@@ -162,8 +162,11 @@ class Vocabulario:
         for c in range(1, 5):
             agregar(f"ANT_{c}", "antigüedad", cuentas["ant"].get(c, 0))
 
-        ramas = pl.DataFrame(tabla_ramas, schema=["r34", "r32", "n_trab_train", "token"], orient="row",
-                             schema_overrides={"r34": pl.Int32, "r32": pl.Int32, "n_trab_train": pl.Int64})
+        ramas = pa.table({
+            "r34": pa.array([f[0] for f in tabla_ramas], pa.int32()),
+            "r32": pa.array([f[1] for f in tabla_ramas], pa.int32()),
+            "n_trab_train": pa.array([f[2] for f in tabla_ramas], pa.int64()),
+            "token": pa.array([f[3] for f in tabla_ramas], pa.string())})
         return cls(tokens, cats, frec, ramas, lo, hi)
 
 
