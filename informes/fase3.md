@@ -90,7 +90,34 @@ Es mucho menos que la estimación de la fase 0 (~4 h para 900 k secuencias de 2.
 
 ### SOP sigue sin aprender
 
-En las tres corridas la pérdida de SOP queda en ≈1,62 y el recall de «orden normal» es 0 en todas las validaciones; el modelo predice siempre una clase minoritaria (a ratos todo «invertido», a ratos todo «mezclado»). Ahora ocurre con el modelo del paper y con datos reales, así que ya no se explica por el tamaño del modelo ni de la muestra. La fase 4 tiene que decidir qué hacer antes de gastar horas: probar sin los pesos 1/p de clase, revisar si la perturbación es detectable (el modelo sólo ve el orden por la atención local y por la posición absoluta) o dejar SOP con peso casi nulo y reportarlo.
+En las tres corridas la pérdida de SOP de validación queda en ≈1,62 (1,643 → 1,615 en bf16 y en fp32 a lo largo de los 1.000 pasos). **Ese valor es el de un predictor que ignora la entrada**: con los pesos de clase 1/p y `label_smoothing=0.1`, un modelo que da probabilidades uniformes (1/3, 1/3, 1/3) obtiene 1,636 (calculado con la misma función de pérdida; la mejor constante posible da lo mismo). Es decir que la cabeza de SOP no aprendió nada útil todavía, y el «recall de la clase normal = 0» es sólo el `argmax` de probabilidades casi uniformes, que salta de una clase a otra entre validaciones. La métrica que sirve es la pérdida de SOP contra la referencia 1,636, no el recall ni la exactitud.
+
+Por qué es difícil (medido en la muestra del 1 %): invertir o mezclar eventos cambia en promedio sólo el 25-28 % de los tokens del documento, y en el 41-44 % de los documentos cambia menos del 20 %, porque rama, provincia, tamaño y antigüedad suelen repetirse en eventos consecutivos. El modelo no tiene posición por índice ni posición relativa en la atención local (`performer.py:33`, `rel_pos = None`), así que sólo puede detectar la perturbación comparando el contenido de un evento con su fecha y edad (que quedan en su lugar), por ejemplo tendencias de salario o de antigüedad.
+
+Los 1.000 pasos son el 5 % de una pasada por train, así que no hay evidencia de que no pueda aprenderlo con más entrenamiento. La fase 4 tiene que decidirlo con datos antes de gastar horas: medir la pérdida de SOP contra 1,636 en la primera pasada y, si sigue ahí, cambiar el diseño (proporciones balanceadas de clases, perturbaciones sólo en documentos con muchos eventos) o dejar SOP con peso casi nulo y reportarlo como desvío del paper.
+
+## Comparación con el repo completo de life2vec (revisado el 2026-10-19)
+
+Se leyeron `SocialComplexityLab/life2vec` (`src/transformer/performer.py`, `embeddings.py`, `models.py`, `src/tasks/{base,mlm}.py`, `src/data_new/augment.py`, `conf/`). La atención y los embeddings coinciden con los de `life2vec-light`: sin posición por índice, `rel_pos = None` en la atención local y sin rotación en las cabezas globales (líneas comentadas bajo «OUR EDITS TO THE PACKAGE»). En el SOP, `cls_task` sólo reordena `document.sentences`: la posición absoluta, la edad y el segmento no se mueven, igual que en esta implementación.
+
+| | life2vec (repo completo) | labor2vec |
+|---|---|---|
+| Ciclo de segmentos por evento | `[2, 3, 1]` (background en 1) | era `(2, 3)`; **corregido a `(2, 3, 1)`** |
+| Pesos de clase de SOP | `[1/0,9, 1/0,1, 1/0,1]` = 1,1 / 10 / 10 (con probabilidades reales 0,9 / 0,05 / 0,05) | 1,1 / 20 / 20 (1/p exacto): **el doble** |
+| Suavizado de etiquetas, pesos MLM/SOP | 0,1; 0,8 / 0,2 | igual |
+| Recorte de gradiente | 1,0 | era `null`; **ahora 1,0** en la configuración |
+| Lote efectivo | lote 8 × `accumulate_grad_batches` 8 = **64** | lote 16-32 sin acumulación |
+| Época | 3.000 lotes de 8 = **24.000 secuencias**, 375 pasos del optimizador; 30 épocas = 720 k secuencias | una pasada por train (344 k) |
+| Precisión | 32 | bf16 (validado en esta fase) |
+| Validación | cada 3 épocas; recarga de dataloaders cada 5 | cada época |
+| Orden de tokens dentro de cada evento | **se mezcla al azar en cada acceso** (`shuffle_within_sentences: true`, incluso en validación) | orden fijo |
+| Ruido temporal | ±5 días | ±15 días (granularidad mensual) |
+| `drop_tokens` (p = 0,01) | por evento, quita un token | por documento, quita el 10 % de los tokens |
+
+Notas:
+- El orden aleatorio de tokens dentro del evento hace que el original sea invariante a ese orden; acá se eligió un orden fijo (subplan de la fase 2, punto 3). Es una decisión de diseño a revisar en la ablación de la fase 8.
+- El subplan y `PLAN.md` hablaban de «30 épocas de 30.000 secuencias»: según `conf/trainer/pretrain.yaml` son 3.000 lotes de 8 = 24.000.
+- Con lote efectivo 64, cada paso del optimizador ve ~3 ejemplos de cada clase minoritaria de SOP; con lote 16 y pesos 20 el gradiente de SOP era mucho más ruidoso. Conviene fijar el lote efectivo en la fase 4 (acumulando gradientes si hace falta).
 
 ## Criterios de aceptación de la fase 3
 

@@ -52,7 +52,7 @@ Con la muestra del 1 %, un lote de 32 documentos (forma (32, 4, 320), objetivos 
 - Ventana del pre-entrenamiento: hasta 2015-12 (`fin_ventana=239`); población: todos los elegibles con eventos en la ventana; variante A como base (la B es la opción `eventos_compactos=True`); umbral de ramas raras: 50 trabajadores.
 - El vocabulario se ajusta con todo el período de train, para que sirva igual con o sin ventana.
 - **Edad**: `pretrain.py` hace `input_ids.long()`, así que entra como entero (años cumplidos aproximados). La edad fraccionaria exigiría cambiar ese cast.
-- **Segmentos**: alternan 2 y 3 por evento; el background va en 1 (`CICLO_SEGMENTOS`). El subplan decía «[2,3,1]», que no se pudo interpretar con certeza.
+- **Segmentos**: los eventos recorren el ciclo 2, 3, 1 y el background va en 1 (`CICLO_SEGMENTOS`), igual que `segment_pattern = [2, 3, 1]` del repo completo de life2vec. (La primera versión usaba sólo 2 y 3; corregido el 2026-10-19 tras revisar ese repo.)
 - **Quitar tokens** (p = 0,01): borra el 10 % de los tokens; ese porcentaje es un supuesto.
 - **SOP**: invertir o mezclar mueve los tokens y deja fijas posición absoluta, edad y segmento. Proporciones 90/5/5 y pesos de clase = inversa de las proporciones (`sop_proporciones`).
 - Datos faltantes en el corpus: -1; en el vocabulario pasan a `[UNK]`.

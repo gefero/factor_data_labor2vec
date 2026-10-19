@@ -93,6 +93,8 @@ def test_documento_variante_a(mundo):
     assert (doc.segmento[:N_FONDO] == 1).all()
     # los dos eventos del mes 1 comparten fecha pero no segmento
     ev1, ev2 = doc.segmento[N_FONDO + 6], doc.segmento[N_FONDO + 12]
+    # ciclo de segmentos por evento, como en life2vec: 2, 3, 1, 2, 3, 1, 2
+    assert list(doc.segmento[N_FONDO::6]) == [2, 3, 1, 2, 3, 1, 2]
     assert ev1 != ev2 and doc.abspos[N_FONDO + 6] == doc.abspos[N_FONDO + 12] == dias_de_mes(np.array([1]))[0]
     assert np.all(np.diff(doc.abspos[N_FONDO:]) >= 0)
     assert doc.edad[N_FONDO] == 1996 - c.fnacim[i] - 1 or doc.edad[N_FONDO] == 1996 - c.fnacim[i]

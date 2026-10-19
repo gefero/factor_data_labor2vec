@@ -20,7 +20,7 @@ entrenamiento:
   pasos_por_epoca: null       # tope de pasos por época (null = pasada completa)
   val_cada_pasos: null        # validar cada N pasos (null = al final de cada época)
   val_lotes: 200              # lotes de validación por época (null = todos)
-  clip_gradiente: null
+  clip_gradiente: 1.0         # como life2vec (gradient_clip_val: 1.0)
   guardar_cada_pasos: 500
   log_cada_pasos: 10
   muestra_unigrama: 20000     # documentos de train para la línea de base unigrama

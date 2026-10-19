@@ -15,7 +15,8 @@ import numpy as np
 from labor2vec.tokens.vocabulario import CLS, MASK, N_ESPECIALES, SEP, UNK, Vocabulario
 
 N_FONDO = 4  # [CLS] SEXO NAC [SEP]
-CICLO_SEGMENTOS = (2, 3)  # los eventos alternan segmento; el background va siempre en 1
+CICLO_SEGMENTOS = (2, 3, 1)  # los eventos recorren este ciclo (como `segment_pattern` del repo completo de life2vec)
+# el background va siempre en segmento 1
 SEG_FONDO = 1
 
 # Orden de SOP
