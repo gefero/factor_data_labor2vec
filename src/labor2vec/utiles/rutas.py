@@ -25,3 +25,6 @@ CORTES_SALARIO = PROCESADOS / "cortes_salario_mensual.parquet"
 CORPUS = PROCESADOS / "corpus"
 VOCABULARIO = CORPUS / "vocabulario.parquet"
 RAMAS = CORPUS / "ramas.parquet"
+
+TAREAS = PROCESADOS / "tareas"
+T1 = TAREAS / "t1.parquet"
