@@ -21,6 +21,13 @@ modelo = [
     "torchmetrics>=1.4",
     "performer-pytorch>=1.1.4",
 ]
+# Análisis de embeddings (fase 5). Sólo local: no hace falta en el cluster.
+analisis = [
+    "scipy>=1.13",
+    "scikit-learn>=1.5",
+    "matplotlib>=3.9",
+    "pacmap>=0.8",
+]
 cpu = ["torch==2.11.0", "labor2vec[modelo]"]
 cu126 = ["torch==2.11.0", "labor2vec[modelo]"]
 
