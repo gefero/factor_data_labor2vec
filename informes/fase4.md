@@ -77,7 +77,20 @@ Curva del pre-entrenamiento (cada 3 épocas):
 
 El modelo recomendado para las fases siguientes es `pre_150ep/modelo_final.pt` (33 MB; en el cluster, y con copia local en `runs/pre_150ep_vista/`, no versionada).
 
+## Tres semillas de la configuración de 150 épocas (para el test de aleatorización de la fase 5)
+
+Se entrenaron dos modelos más con la misma configuración y las semillas 1 y 2 (`pre_150ep_s1` y `pre_150ep_s2`): 2 cadenas de 6 tramos de `short` con `afterok`, jobs 1180789 a 1180794 y 1180795 a 1180800, todos `COMPLETED`, corriendo en paralelo en nodos distintos entre el 19/10 a las 21:25 y el 20/10 a las 01:56 hora de Argentina (4,5 h de cómputo cada una; el sexto tramo de cada cadena sólo retomó un entrenamiento ya completo y salió en 1 minuto). Sin NaN; 56.250 pasos en las dos.
+
+| Semilla | Perplejidad MLM | Exactitud MLM | AUC de SOP | Pérdida de SOP | Recall SOP (normal / invertido / mezclado) |
+|---|---|---|---|---|---|
+| 0 (`pre_150ep`) | 4,725 | 47,8 % | 0,865 | 1,196 | 91 / 39 / 63 % |
+| 1 | 4,855 | 47,5 % | 0,878 | 1,154 | 89 / 47 / 70 % |
+| 2 | 4,838 | 47,5 % | 0,866 | 1,210 | 91 / 43 / 64 % |
+| **Media ± desvío** | **4.806 ± 0.071** | 47.6 ± 0.2 % | 0.870 ± 0.007 | 1.187 ± 0.029 | |
+
+- Los tres modelos son consistentes: la dispersión entre semillas es de ~1,5 % en la perplejidad y de 0,01 en el AUC de SOP, mucho menor que la diferencia con la corrida de 30 épocas (6,36 / 0,795). El resultado de la corrida larga no depende de la semilla.
+- Los modelos están en `~/labor2vec/runs/pre_150ep`, `pre_150ep_s1` y `pre_150ep_s2` (`modelo_final.pt` en cada carpeta), y como copia local en `runs/pre_150ep_vista/`, `runs/pre_150ep_s1_vista/` y `runs/pre_150ep_s2_vista/` (no versionado).
+
 ## Pendiente
 
-1. **Semillas extra para el test de aleatorización** (fase 5): 2 corridas más con la configuración elegida. Con la de 150 épocas son ~5 h cada una.
-2. Fase 5: evaluación del espacio de conceptos.
+1. Fase 5: evaluación del espacio de conceptos (vecindades por coseno, PaCMAP, test de aleatorización con los 3 modelos y hubness).
