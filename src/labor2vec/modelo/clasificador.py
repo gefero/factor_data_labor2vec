@@ -23,6 +23,7 @@ FT_DEFECTO = dict(
     tipo="transformer",            # transformer | gru
     desde_cero=False,              # transformer sin pre-entrenar
     congelar_embeddings=True,      # sólo se entrenan los embeddings de [CLS], [SEP] y [UNK]
+    congelar_encoder=False,        # sonda lineal: se entrena sólo la cabeza y el encoder queda fijo y en eval
     lr=0.01, decaimiento_capa=0.95, decaimiento_epoca=0.8, weight_decay_cabeza=0.01, weight_decay_encoder=0.0,
     dropout_cabeza=0.1, umbral=0.5,
 )
@@ -70,7 +71,10 @@ class ClasificadorT1(pl.LightningModule):
             ancho = hp.hidden_size
         self.cabeza = AttentionDecoder(ancho, self.ft.dropout_cabeza)
         self._acum = []
-        if self.ft.tipo == "transformer" and self.ft.congelar_embeddings:
+        if self.ft.tipo == "transformer" and self.ft.congelar_encoder:
+            for p in self.encoder.parameters():
+                p.requires_grad = False
+        elif self.ft.tipo == "transformer" and self.ft.congelar_embeddings:
             self._congelar_embeddings()
 
     def cargar_preentrenado(self, ruta) -> None:
@@ -87,6 +91,12 @@ class ClasificadorT1(pl.LightningModule):
         libres[[CLS, SEP, UNK]] = 1.0
         self.register_buffer("_filas_libres", libres, persistent=False)
         param.register_hook(lambda g: g * self._filas_libres.to(g.dtype))
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        if self.ft.tipo == "transformer" and self.ft.congelar_encoder:
+            self.encoder.eval()  # sin dropout en el encoder fijo
+        return self
 
     def forward(self, batch):
         x, mascara = batch["input_ids"].long(), batch["padding_mask"].long()

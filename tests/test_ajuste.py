@@ -237,7 +237,7 @@ def test_evaluar_arma_tablas_y_figuras(tmp_path, monkeypatch):
     t1_ruta = tmp_path / "t1.parquet"
     pq.write_table(pa.table({"id_trabajador": ids, "sexo": 1 + ids % 2, "edad_corte": 25 + ids % 31}), t1_ruta)
     runs = tmp_path / "runs"
-    for carpeta, ruido in (("t1_l2v_s0", 0.5), ("t1_l2v_s1", 0.6), ("t1_tab/logistica", 1.5)):
+    for carpeta, ruido in (("t1_l2v_lr0001", 0.5), ("t1_l2v_lr0001_s1", 0.6), ("t1_tab/logistica", 1.5)):
         (runs / carpeta).mkdir(parents=True)
         p = 1 / (1 + np.exp(-(y19 + rng.normal(size=n) * ruido - 0.5)))
         perm = rng.permutation(ids)  # el orden de filas no importa: se alinea por id, y las etiquetas viajan con él
@@ -253,3 +253,24 @@ def test_evaluar_arma_tablas_y_figuras(tmp_path, monkeypatch):
     assert "mujeres" in evaluar.subgrupos(modelos, t1_ruta) and "Brier" in evaluar.calibracion(modelos)
     evaluar.figuras(modelos, tmp_path)
     assert (tmp_path / "curvas.png").stat().st_size > 1000
+
+
+def test_sonda_lineal_solo_entrena_la_cabeza(mundo, t1, pre):
+    ck = torch.load(pre, weights_only=False)
+    torch.manual_seed(0)
+    m = ClasificadorT1(ck["hparams"], {"congelar_encoder": True, "lr": 0.01})
+    m.cargar_preentrenado(pre)
+    antes = {k: v.clone() for k, v in m.encoder.state_dict().items()}
+    ds = _dataset(mundo, t1)
+    lote = collate([ds[i] for i in range(8)], 128, 16)
+    lote["target"] = (torch.arange(8) % 2).long()
+    opt = m.configure_optimizers()["optimizer"]
+    m.train()
+    assert not m.encoder.training and m.cabeza.training
+    for _ in range(3):
+        opt.zero_grad()
+        perdida_balanceada(m(lote), lote["target"]).backward()
+        opt.step()
+    assert all(torch.equal(v, antes[k]) for k, v in m.encoder.state_dict().items())
+    assert all(p.grad is None for p in m.encoder.parameters())
+    assert any(p.grad is not None for p in m.cabeza.parameters())

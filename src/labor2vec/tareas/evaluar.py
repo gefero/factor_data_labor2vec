@@ -20,7 +20,7 @@ from labor2vec.utiles.rutas import INFORMES, RAIZ, T1
 
 # nombre en la tabla -> patrón de carpetas dentro de runs/ (cada una con predicciones_{val,test}.parquet)
 MODELOS = {
-    "Transformer pre-entrenado (L2V)": "t1_l2v_s*",
+    "Transformer pre-entrenado (L2V)": "t1_l2v_lr0001*",
     "Transformer sin pre-entrenar": "t1_scratch_s*",
     "GRU": "t1_gru_s*",
     "FFNN": "t1_tab/ffnn_s*",
