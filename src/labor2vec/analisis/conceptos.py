@@ -62,17 +62,30 @@ def metricas_modelo(e: np.ndarray, c, n_perm: int, rng) -> dict:
     return out
 
 
+def etiqueta(token: str, categoria: str, descripcion: str, n: int = 48) -> str:
+    """Nombre legible de un token: su descripción del MTEySS; los salarios y años, que no tienen, se describen por su valor."""
+    if descripcion:
+        texto = figuras.corto(descripcion, n)
+    elif categoria == "salario":
+        v = int(token.rsplit("_", 1)[1])
+        texto = "remuneración cero" if v == 0 else f"percentil {v}"
+    elif categoria == "nacimiento":
+        texto = f"nacidos en {token.rsplit('_', 1)[1]}"
+    else:
+        return token
+    return f"{token} ({texto})"
+
+
 def vecinos_tabla(e: np.ndarray, c, tokens: list[str], k: int = 5) -> str:
+    """Tabla de los k vecinos más cercanos de cada token; todos con su nombre, uno por línea."""
     t = c.tabla
     nombres = t["token"].to_list()
-    desc = dict(zip(nombres, t["descripcion"].to_list()))
+    et = [etiqueta(a, b, d) for a, b, d in zip(nombres, t["categoria"].to_list(), t["descripcion"].to_list())]
     nb = m.vecinos(e, k)
-    filas = ["| Token | Vecinos más cercanos (coseno) |", "|---|---|"]
+    filas = ["| Token | Vecinos más cercanos (coseno), del más al menos cercano |", "|---|---|"]
     for tok in tokens:
         i = nombres.index(tok)
-        etiqueta = f"{tok} ({desc[tok][:40]})" if desc[tok] else tok
-        vec = ", ".join(f"{nombres[j]}" for j in nb[i])
-        filas.append(f"| {etiqueta} | {vec} |")
+        filas.append(f"| {et[i]} | " + "<br>".join(f"{r + 1}. {et[j]}" for r, j in enumerate(nb[i])) + " |")
     return "\n".join(filas)
 
 
@@ -207,8 +220,9 @@ def main() -> None:
     # el vecino más cercano de REM_000
     nb = m.vecinos(emb["s0"], 3)
     nombres = c.tabla["token"].to_list()
+    et = [etiqueta(a, b, d) for a, b, d in zip(nombres, c.tabla["categoria"].to_list(), c.tabla["descripcion"].to_list())]
     L.append("\nVecinos de `REM_000` (remuneración cero) por modelo: " + "; ".join(
-        f"{n}: " + ", ".join(nombres[j] for j in m.vecinos(emb[n], 3)[nombres.index("REM_000")]) for n in MODELOS) + ".")
+        f"{n}: " + ", ".join(et[j] for j in m.vecinos(emb[n], 3)[nombres.index("REM_000")]) for n in MODELOS) + ".")
     (salida / "resultados.md").write_text("\n".join(L) + "\n")
     print(f"listo en {time.time() - t0:.0f} s; {salida}")
 
