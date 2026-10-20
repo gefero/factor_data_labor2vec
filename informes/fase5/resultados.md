@@ -82,7 +82,7 @@ Mediana del grado y proporción con grado 0 por categoría (modelo s0):
 | REM_050 | REM_051, REM_049, REM_048, REM_052, REM_045 |
 | REM_100 | REM_099, REM_098, REM_097, REM_096, REM_095 |
 | NAC_1980 | NAC_1981, NAC_1979, NAC_1982, NAC_1978, NAC_1983 |
-| TAM_1 | TAM_2, TAM_3, TAM_4, ANT_1, PROV_02 |
-| SEXO_M | SEXO_V, NAC_1990, NAC_1987, NAC_1980, NAC_1989 |
+| TAM_1 (Más de 200 empleados) | TAM_2, TAM_3, TAM_4, ANT_1, PROV_02 |
+| SEXO_M (Mujer) | SEXO_V, NAC_1990, NAC_1987, NAC_1980, NAC_1989 |
 
 Vecinos de `REM_000` (remuneración cero) por modelo: s0: REM_001, REM_002, REM_007; s1: REM_001, REM_002, REM_003; s2: REM_001, REM_005, REM_004; ep30: REM_003, REM_001, REM_094.

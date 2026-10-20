@@ -44,6 +44,14 @@ Todas con p = 0,001 (el mínimo posible). Las ramas vecinas comparten sector muc
 
 ![Espacio de conceptos](fase5/mapa_conceptos.png)
 
+En el mapa 2D los diez tokens de **tamaño de empresa, antigüedad y sexo** caen casi en el mismo punto (los cuatro de tamaño y los cuatro de antigüedad prácticamente superpuestos, y los dos de sexo también), por eso en lugar de una etiqueta por punto el mapa trae una nota con flecha por categoría que lista todos sus niveles con su nombre. Esa superposición es de la proyección 2D de PaCMAP; en el mapa 3D se pueden ver mejor por separado, aunque tampoco se separan mucho.
+
+### Mapas con nombres de ramas y visualización 3D
+
+- [fase5/mapa_ramas.png](fase5/mapa_ramas.png): las ramas coloreadas por sector (izquierda) y con el nombre de las ramas más frecuentes (derecha). **No se rotula el centro de cada sector** porque los sectores no forman grupos compactos (la pureza por letra es 0,41): una etiqueta en el centro quedaría en una zona donde hay ramas de otros sectores. Sólo caben unas 24 etiquetas sin solaparse; para ver todas está el mapa interactivo.
+- [fase5/mapa_ramas.html](fase5/mapa_ramas.html): mapa interactivo de las 296 ramas (282 finas y 14 agregadas a 2 dígitos); al pasar el cursor por un punto aparece el código, la descripción, el sector, la división y los eventos en train. No necesita conexión.
+- [fase5/mapa_3d.html](fase5/mapa_3d.html): **espacio de conceptos en 3D** (PaCMAP con 3 componentes, modelo `s0`). Se rota y se acerca con el mouse y el cursor muestra el nombre y la descripción del token. **Un clic en un elemento de la leyenda resalta ese grupo y atenúa el resto** (por ejemplo, la rama «Agricultura y ganadería»); se pueden resaltar varios a la vez y otro clic sobre el mismo lo quita. Arriba del gráfico hay botones para resaltar una categoría entera, quitar el resaltado y una casilla para ocultar por completo lo no resaltado. Salarios con degradé por percentil, años de nacimiento con degradé por año, provincias por región, ramas por sector. La lógica del resaltado se probó con `node` y un entorno simulado (`tests/resaltar.test.js`); no se probó en un navegador real. **Necesita conexión a internet** para cargar la librería de gráficos (`plotly`) desde su CDN. La proyección 3D se ve coherente con la 2D (salarios y años en curvas, provincias en un grupo, ramas en una nube), pero el autor de PaCMAP advierte que los casos con más de 2 componentes están menos probados.
+
 ### Robustez entre semillas
 
 ![Dispersión entre modelos](fase5/dispersion_modelos.png)

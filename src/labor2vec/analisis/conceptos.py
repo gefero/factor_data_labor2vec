@@ -76,10 +76,30 @@ def vecinos_tabla(e: np.ndarray, c, tokens: list[str], k: int = 5) -> str:
     return "\n".join(filas)
 
 
+def figuras_ramas(e: np.ndarray, c, salida) -> None:
+    """Mapa PaCMAP sólo de las ramas (r34 y r32 agregadas) con nombres de sector y de división, y versión interactiva."""
+    import polars as pl
+
+    cat = c.tabla["categoria"].to_numpy()
+    m_ = np.isin(cat, ["rama", "rama2"])
+    sub = c.tabla.filter(pl.Series(m_))
+    xy = figuras.proyectar(e[m_])
+    figuras.mapa_ramas(xy, sub, salida / "mapa_ramas.png",
+                       "Ramas de actividad en el espacio de conceptos (PaCMAP, modelo s0)")
+    figuras.html_ramas(xy, sub, salida / "mapa_ramas.html")
+
+
+def figura_3d(e: np.ndarray, c, salida) -> None:
+    """Proyección PaCMAP en 3 dimensiones de todos los conceptos, en un HTML interactivo."""
+    figuras.mapa_3d(figuras.proyectar(e, 3), c.tabla, salida / "mapa_3d.html")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--n-perm", type=int, default=1000, help="permutaciones de etiquetas por medida")
     ap.add_argument("--n-iter", type=int, default=5000, help="iteraciones del test de permutación entre modelos")
+    ap.add_argument("--solo-ramas", action="store_true", help="sólo el mapa de ramas con nombres (PNG y HTML)")
+    ap.add_argument("--solo-3d", action="store_true", help="sólo la visualización 3D interactiva (HTML)")
     args = ap.parse_args()
     t0 = time.time()
     salida = INFORMES / "fase5"
@@ -87,6 +107,13 @@ def main() -> None:
     c = cargar_conceptos()
     emb = {n: matriz_embeddings(r)[N_ESPECIALES:] for n, r in MODELOS.items()}
     assert all(e.shape[0] == len(c) for e in emb.values())
+    if args.solo_ramas or args.solo_3d:
+        if args.solo_ramas:
+            figuras_ramas(emb["s0"], c, salida)
+        if args.solo_3d:
+            figura_3d(emb["s0"], c, salida)
+        print(f"listo en {time.time() - t0:.0f} s; {salida}")
+        return
     rng = np.random.default_rng(0)
 
     res = {n: metricas_modelo(e, c, args.n_perm, np.random.default_rng(1)) for n, e in emb.items()}
@@ -119,6 +146,8 @@ def main() -> None:
     figuras.dispersion_modelos({**d, "permutado": perm}, [("s0", "s1"), ("s0", "s2"), ("s1", "s2"), ("s0", "permutado")],
                                salida / "dispersion_modelos.png", rng=rng)
     figuras.hubness({n: res[n]["grados"] for n in SEMILLAS}, salida / "hubness.png", K_HUB)
+    figuras_ramas(emb["s0"], c, salida)
+    figura_3d(emb["s0"], c, salida)
 
     # ---- tablas ----
     L = ["# Resultados del análisis de conceptos (generado por `python -m labor2vec.analisis.conceptos`)\n"]

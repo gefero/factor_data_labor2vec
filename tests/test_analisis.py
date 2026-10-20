@@ -111,3 +111,53 @@ def test_el_cargador_extrae_la_matriz_del_modelo(tmp_path):
     assert np.allclose(e[N_ESPECIALES:], resto - resto.mean(0), atol=1e-6)
     assert np.allclose(e[N_ESPECIALES:].mean(0), 0, atol=1e-6)
     assert isinstance(cargar_modelo(ruta), TransformerEncoder)
+
+
+def _tabla_sintetica():
+    """Tabla de conceptos mínima con las columnas que usan las figuras."""
+    import polars as pl
+
+    filas = []
+    for i in range(1, 21):
+        filas.append((f"REM_{i:03d}", i, "salario", 100, i, None, None, None, ""))
+    for i in range(6):
+        filas.append((f"RAMA_{4000 + i}", 100 + i, "rama", 50 + i, 4000 + i, 4 if i < 3 else 7, 40, None, f"Rama {i}"))
+    filas.append(("RAMA2_40", 120, "rama2", 5, 40, 4, 40, None, "División 40"))
+    filas.append(("PROV_06", 121, "provincia", 70, 6, None, None, "Pampeana", "Buenos Aires"))
+    filas.append(("PROV_02", 122, "provincia", 70, 2, None, None, "GBA", "CABA"))
+    filas.append(("TAM_1", 123, "tamaño", 10, 1, None, None, None, ""))
+    filas.append(("NAC_1980", 124, "nacimiento", 10, 1980, None, None, None, ""))
+    return pl.DataFrame(filas, schema=["token", "id", "categoria", "frecuencia", "valor", "letra", "r32", "region",
+                                       "descripcion"], orient="row",
+                        schema_overrides={"valor": pl.Int64, "letra": pl.Int64, "r32": pl.Int64, "region": pl.String})
+
+
+def test_figuras_de_ramas_y_3d_se_generan(tmp_path):
+    from labor2vec.analisis import figuras
+
+    t = _tabla_sintetica()
+    rng = np.random.default_rng(0)
+    figuras.mapa_ramas(rng.normal(size=(t.height, 2)), t, tmp_path / "ramas.png", "prueba", n_nombres=5)
+    figuras.html_ramas(rng.normal(size=(t.height, 2)), t, tmp_path / "ramas.html")
+    figuras.mapa_3d(rng.normal(size=(t.height, 3)), t, tmp_path / "mapa_3d.html")
+    assert (tmp_path / "ramas.png").stat().st_size > 1000
+    html = (tmp_path / "ramas.html").read_text()
+    assert "RAMA_4000" in html and "División 40" in html or "RAMA2_40" in html
+    assert 'Scatter3d' in (tmp_path / "mapa_3d.html").read_text() or "scatter3d" in (tmp_path / "mapa_3d.html").read_text()
+
+
+def test_logica_js_de_resaltado_del_mapa_3d(tmp_path):
+    """La lógica del clic en la leyenda del HTML 3D (resaltar y atenuar), probada con node y un DOM simulado."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from labor2vec.analisis.figuras import JS_RESALTAR
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node no está instalado")
+    js = tmp_path / "resaltar.js"
+    js.write_text(JS_RESALTAR.replace("{plot_id}", "grafico"))
+    r = subprocess.run([node, str(Path(__file__).parent / "resaltar.test.js"), str(js)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
