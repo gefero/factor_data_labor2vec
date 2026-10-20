@@ -57,7 +57,27 @@ Curva del pre-entrenamiento (cada 3 épocas):
 - `modelo_final.pt` (sólo pesos, 33 MB) y `config.json` de cada corrida, en `~/labor2vec/runs/{diag_sop,pre_30ep}/` en Mendieta y con copia local en `runs/*_vista/` (no versionado). Los `last.ckpt` y `mejor.ckpt` (97 y 33 MB) quedan sólo en el cluster.
 - CSV de métricas por ejecución en `logs/version_N/metrics.csv`.
 
+## Corrida larga (`pre_150ep`, 4.4)
+
+150 épocas × 375 pasos = 56.250 pasos = 3,6 M de secuencias (unas 10 pasadas por train), misma configuración y semilla 0. Seis tramos de `short` encadenados con `afterok` (jobs 1180708 a 1180713), todos `COMPLETED`, sin NaN: del 19/10 a las 15:19 hasta las 20:27 hora de Argentina, 5 h 8 min en total, y entre tramos prácticamente no hubo espera en la cola. Rendimiento: 225 secuencias/s, 18 GiB de pico.
+
+| | Diagnóstico (14 épocas) | Pre-entrenamiento (30 épocas) | **Corrida larga (150 épocas)** |
+|---|---|---|---|
+| Perplejidad MLM de validación | 7,06 | 6,36 | **4,73** |
+| Exactitud top-1 MLM | 41,9 % | 43,2 % | **47,8 %** |
+| AUC de SOP | 0,741 | 0,795 | **0,865** |
+| Pérdida de SOP | 1,332 | 1,261 | **1,196** |
+| Recall de SOP por clase (normal / invertido / mezclado) | — | 91 / 32 / 45 % | 91 / 39 / 63 % |
+| Perplejidad de la unigrama | 81,4 | 81,4 | 81,4 |
+
+- **Perplejidad MLM**: 17 veces menor que la unigrama y un 26 % menor que la de 30 épocas. La curva baja de forma sostenida (6,87 en la época 29, 6,04 en la 47, 5,14 en la 83, 4,81 en la 119) y se aplana al final (4,75 en la época 128, 4,73 en la 137, 4,73 en la 149), cuando la tasa de aprendizaje llega a su mínimo.
+- **SOP**: el AUC sube a lo largo de toda la corrida y llega a 0,865. El modelo ahora distingue mejor los documentos mezclados (recall 63 %) que los invertidos (39 %).
+- **Sin sobreajuste visible**: la pérdida MLM de train (1,67-1,72, con dropout y augmentación) sigue por encima de la de validación (1,55) al final de la corrida, aun después de unas 10 pasadas.
+- **Respuesta a la pregunta del 4.4**: la corrida larga sí valió la pena. La mejora de duplicar las secuencias vistas (14 a 30 épocas) fue de ~10 % en la perplejidad; la de multiplicar por 5 (30 a 150 épocas) fue de ~26 %. No se puede afirmar si 300 épocas seguirían mejorando: la tasa de aprendizaje en el mínimo al final de OneCycle hace que la curva se aplane sin que eso muestre un límite del modelo.
+
+El modelo recomendado para las fases siguientes es `pre_150ep/modelo_final.pt` (33 MB; en el cluster, y con copia local en `runs/pre_150ep_vista/`, no versionada).
+
 ## Pendiente
 
-1. **Corrida larga (4.4)**: ¿vale la pena? La perplejidad bajó un 10 % al duplicar las secuencias vistas, pero con una sola corrida no se puede separar el efecto de entrenar más del efecto del calendario. Costaría ~4 h (150 épocas, unas 10 pasadas).
-2. **Semillas extra para el test de aleatorización** (fase 5): 2 corridas más de la configuración elegida, ~1 h cada una con 30 épocas.
+1. **Semillas extra para el test de aleatorización** (fase 5): 2 corridas más con la configuración elegida. Con la de 150 épocas son ~5 h cada una.
+2. Fase 5: evaluación del espacio de conceptos.
