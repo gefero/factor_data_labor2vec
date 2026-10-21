@@ -37,6 +37,12 @@ class Opciones:
     max_length: int = 2560
     fin_ventana: int | None = None  # último mes_idx incluido (239 = 2015-12); None = toda la historia
     eventos_compactos: bool = False  # variante B: sólo los eventos `nueva` llevan rama, provincia y antigüedad
+    # "todos" (variante A) | "sin_ultimo_valor": cada evento es REM TAM [SEP], sin rama, provincia ni antigüedad (atributos de
+    # «último valor» de la MLER, que pueden traer información posterior al corte; plans/PLAN_fase_8.md)
+    atributos: str = "todos"
+    # control de la fase 8: None | "tiempo" (se permutan fechas y edades entre los eventos de la persona) | "orden" (se
+    # permuta el orden de los eventos en la secuencia, con su fecha). Necesita `rng`; con el de val/test es determinista.
+    control_temporal: str | None = None
     # augmentación (probabilidades por documento, como en el config de light)
     p_remuestreo: float = 0.4
     rango_remuestreo: tuple[float, float] = (0.5, 0.75)  # fracción de eventos que se conserva
@@ -50,6 +56,14 @@ class Opciones:
     p_sop_mezclado: float = 0.05
     # MLM
     mask_ratio: float = 0.30
+
+
+def opciones_de(d: dict, **extra) -> Opciones:
+    """`Opciones` a partir de la sección `datos` de un YAML (max_length, fin_ventana y, si están, eventos_compactos,
+    atributos y control_temporal); `extra` pisa campos sueltos (p. ej. `mask_ratio`)."""
+    return Opciones(max_length=d["max_length"], fin_ventana=d["fin_ventana"],
+                    eventos_compactos=d.get("eventos_compactos", False), atributos=d.get("atributos", "todos"),
+                    control_temporal=d.get("control_temporal"), **extra)
 
 
 @dataclass
@@ -87,12 +101,17 @@ class Documento:
         return np.stack([self.tokens, self.abspos, self.edad, self.segmento]).astype(np.int64)
 
 
-def bloques_de_eventos(ev: Eventos, tablas: dict, compactos: bool) -> tuple[np.ndarray, np.ndarray]:
+def bloques_de_eventos(ev: Eventos, tablas: dict, compactos: bool,
+                       atributos: str = "todos") -> tuple[np.ndarray, np.ndarray]:
     """Tokens de cada evento, concatenados, y largo de cada evento.
 
     Variante A: REM TAM RAMA PROV ANT [SEP]. Variante B: REM TAM [SEP] salvo en los eventos `nueva`, que
-    llevan los seis tokens.
+    llevan los seis tokens. Con `atributos="sin_ultimo_valor"`: REM TAM [SEP] en todos los eventos.
     """
+    if atributos not in ("todos", "sin_ultimo_valor"):
+        raise ValueError(f"atributos desconocido: {atributos!r}")
+    if atributos == "sin_ultimo_valor" and compactos:
+        raise ValueError("atributos='sin_ultimo_valor' no se combina con eventos_compactos")
     n = len(ev)
     m = np.empty((n, 6), dtype=np.int32)
     m[:, 0] = tablas["rem"][ev.pct_rem + 1]
@@ -101,6 +120,8 @@ def bloques_de_eventos(ev: Eventos, tablas: dict, compactos: bool) -> tuple[np.n
     m[:, 3] = _buscar(tablas["prov"], ev.provi)
     m[:, 4] = tablas["ant"][ev.antig + 1]
     m[:, 5] = SEP
+    if atributos == "sin_ultimo_valor":
+        return m[:, [0, 1, 5]].ravel(), np.full(n, 3, dtype=np.int32)
     if not compactos:
         return m.ravel(), np.full(n, 6, dtype=np.int32)
     completo = ev.nueva.astype(bool)
@@ -149,7 +170,18 @@ def construir_documento(ev: Eventos, sexo: int, fnacim: int, vocab: Vocabulario,
         ocultar_fondo = rng.random() < op.p_ocultar_fondo
         quitar = rng.random() < op.p_quitar_tokens
 
-    plano, largos = bloques_de_eventos(ev, tablas, op.eventos_compactos)
+    if op.control_temporal and len(ev) > 1:
+        if rng is None:
+            raise ValueError("control_temporal necesita rng")
+        p = rng.permutation(len(ev))
+        if op.control_temporal == "tiempo":  # mismos eventos en el mismo orden, sin saber cuándo pasó cada uno
+            dias, edad = dias[p], edad[p]
+        elif op.control_temporal == "orden":  # cada evento conserva su fecha pero cambia de lugar en la secuencia
+            ev, dias, edad = ev.tomar(p), dias[p], edad[p]
+        else:
+            raise ValueError(f"control_temporal desconocido: {op.control_temporal!r}")
+
+    plano, largos = bloques_de_eventos(ev, tablas, op.eventos_compactos, op.atributos)
     # truncado: se conservan los eventos más recientes que entran junto al background
     cupo = op.max_length - N_FONDO
     acum = np.cumsum(largos[::-1])[::-1]  # tokens de este evento y de todos los posteriores

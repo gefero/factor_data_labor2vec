@@ -1,6 +1,6 @@
 """Evaluación de T1-T4: tabla tipo A2 del paper con IC por bootstrap, subgrupos, calibración y figuras.
 
-    python -m labor2vec.tareas.evaluar [--tarea t1|t2|t3|t4] [--runs runs] [--bootstrap 1000]
+    python -m labor2vec.tareas.evaluar [--tarea t1|t2|t3|t4|t2c|t3d|t4c] [--prefijo t3_uv] [--runs runs] [--bootstrap 1000]
 
 Busca las predicciones de test que escriben `ajustar` y `tabulares` (`predicciones_test.parquet`) en `runs/` según los
 patrones de cada tarea y escribe en `informes/fase6/` (T1) o `informes/fase6b/<tarea>/` (T2-T4).
@@ -9,6 +9,9 @@ patrones de cada tarea y escribe en `informes/fase6/` (T1) o `informes/fase6b/<t
 - T2 y T4 (multiclase ordenadas): QWK, MAE, F1 macro, exactitud balanceada y AUC uno-contra-resto, con la persistencia
   (T2: repetir el quintil de 2015; T4: «igual») como línea de base; subgrupos y matrices de confusión.
 Los modelos con varias semillas se reportan como la media entre semillas, con el IC de esa media.
+Fase 8 (plans/PLAN_fase_8.md): T2c (cambio de quintil), T3d (destino de la letra) y T4c (cambio de tamaño sí/no), con la
+salida en `informes/fase8/<tarea>/`. `--prefijo` cambia el prefijo de las corridas (`t3_uv` busca `t3_uv_l2v_s*`,
+`t3_uv_tab/…`) para evaluar una variante; `--runs runs/ctrl_tiempo` evalúa las predicciones con un control temporal.
 """
 
 import argparse
@@ -54,6 +57,16 @@ CONFIG = {
                metricas=[("qwk", "QWK"), ("mae", "MAE"), ("f1_macro", "F1 macro"), ("exactitud_bal", "Exact. balanc."),
                          ("auc_macro", "AUC macro")],
                estado="q2015", clases=["Q1", "Q2", "Q3", "Q4", "Q5"], salida=INFORMES / "fase6b" / "t2"),
+    "t2c": dict(binaria=False, K=3, tabla=DIR_TAREAS / "t2c.parquet", patrones=_patrones("t2c"), monitor="auc_macro",
+                metricas=[("auc_macro", "AUC macro"), ("qwk", "QWK"), ("mae", "MAE"), ("f1_macro", "F1 macro"),
+                          ("exactitud_bal", "Exact. balanc.")],
+                estado=None, clases=["baja", "igual", "sube"], salida=INFORMES / "fase8" / "t2c"),
+    "t3d": dict(binaria=False, K=6, tabla=DIR_TAREAS / "t3d.parquet", patrones=_patrones("t3d"), monitor="auc_macro",
+                metricas=[("auc_macro", "AUC macro"), ("exactitud_bal", "Exact. balanc."), ("f1_macro", "F1 macro")],
+                estado=None, sin_persistencia=True, clases=[f"dest. {k}" for k in range(1, 6)] + ["otras"],
+                salida=INFORMES / "fase8" / "t3d"),
+    "t4c": dict(binaria=True, tabla=DIR_TAREAS / "t4c.parquet", patrones=_patrones("t4c"), etiquetas=[("y", "tabla.md")],
+                salida=INFORMES / "fase8" / "t4c"),
     "t4": dict(binaria=False, K=3, tabla=DIR_TAREAS / "t4.parquet", patrones=_patrones("t4"), monitor="auc_macro",
                metricas=[("auc_macro", "AUC macro"), ("qwk", "QWK"), ("exactitud_bal", "Exact. balanc."),
                          ("f1_macro", "F1 macro"), ("auc_c0", "AUC más chica"), ("auc_c2", "AUC más grande")],
@@ -191,7 +204,8 @@ def _con_base(modelos: dict, y: np.ndarray, cfg: dict) -> dict:
         persistencia = _uno_hot(np.full(n, 1), k)  # T4: «igual»
     azar = np.random.default_rng(20261020).dirichlet(np.ones(k), n)
     mayoria = _uno_hot(np.full(n, np.bincount(y, minlength=k).argmax()), k)
-    return {**modelos, "Persistencia": [{"P": persistencia}], "Mayoría": [{"P": mayoria}], "Azar": [{"P": azar}]}
+    base = {} if cfg.get("sin_persistencia") else {"Persistencia": [{"P": persistencia}]}  # T3d es nominal: no hay «igual»
+    return {**modelos, **base, "Mayoría": [{"P": mayoria}], "Azar": [{"P": azar}]}
 
 
 def tabla_multi(modelos: dict, cfg: dict, n_boot: int) -> tuple[str, dict]:
@@ -270,12 +284,17 @@ def figura_confusion(modelos: dict, cfg: dict, salida: Path) -> None:
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--tarea", default="t1", choices=list(CONFIG))
+    ap.add_argument("--prefijo", help="prefijo de las corridas de una variante (p. ej. t3_uv); por defecto el de la tarea")
+    ap.add_argument("--salida", help="carpeta de salida; por defecto informes/fase6, fase6b o fase8 según la tarea")
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--bootstrap", type=int, default=1000)
     args = ap.parse_args(argv)
-    cfg = CONFIG[args.tarea]
+    cfg = dict(CONFIG[args.tarea])
+    if args.prefijo:
+        cfg["patrones"] = _patrones(args.prefijo)
+        cfg["salida"] = INFORMES / "fase8" / args.prefijo
     runs = Path(args.runs) if Path(args.runs).is_absolute() else RAIZ / args.runs
-    salida = cfg["salida"]
+    salida = Path(args.salida) if args.salida else cfg["salida"]
     salida.mkdir(parents=True, exist_ok=True)
     modelos = cargar_modelos(runs, cfg["patrones"])
     if not modelos:

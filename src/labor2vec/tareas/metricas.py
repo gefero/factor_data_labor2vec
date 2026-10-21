@@ -124,6 +124,24 @@ def _bootstrap(y, ps: list, f, n: int, semilla: int) -> dict:
     return {k: (float(base[k]), *np.percentile(muestras[k], [2.5, 97.5]).tolist()) for k in base}
 
 
+def bootstrap_diferencia(y, ps_a: list, ps_b: list, f, n: int = 1000, semilla: int = 0) -> tuple[float, float, float]:
+    """Diferencia pareada de una métrica entre dos modelos sobre las mismas personas: media de `f(y, p)` entre las
+    semillas de `ps_a` menos la de `ps_b`, con IC al 95 % por bootstrap estratificado por clase (la misma muestra de
+    personas para los dos, así que el intervalo refleja sólo la diferencia). `f(y, p)` devuelve un número; `p` es el vector
+    de probabilidades (binaria) o la matriz (n, K). Devuelve (diferencia, inferior, superior)."""
+    y = np.asarray(y).astype(int)
+    ps_a, ps_b = [np.asarray(p, dtype=np.float64) for p in ps_a], [np.asarray(p, dtype=np.float64) for p in ps_b]
+    rng = np.random.default_rng(semilla)
+    por_clase = [np.flatnonzero(y == k) for k in np.unique(y)]
+
+    def dif(idx):
+        return np.mean([f(y[idx], p[idx]) for p in ps_a]) - np.mean([f(y[idx], p[idx]) for p in ps_b])
+
+    base = dif(np.arange(len(y)))
+    muestras = [dif(np.concatenate([rng.choice(c, len(c)) for c in por_clase])) for _ in range(n)]
+    return float(base), *np.percentile(muestras, [2.5, 97.5]).tolist()
+
+
 def bootstrap(y, ps: list, n: int = 1000, semilla: int = 0, umbral: float = 0.5) -> dict:
     """IC al 95 % por bootstrap estratificado (positivos y negativos se remuestrean por separado).
 

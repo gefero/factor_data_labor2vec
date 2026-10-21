@@ -61,7 +61,9 @@ class DatasetPretrain(Dataset):
         """Largo aproximado (tokens) de cada documento antes de la augmentación y con el tope de max_length."""
         off = self.corpus.offsets
         n = (self.fin - off[:-1])[self.indices]
-        if not self.op.eventos_compactos:
+        if self.op.atributos == "sin_ultimo_valor":
+            tok = 3 * n
+        elif not self.op.eventos_compactos:
             tok = 6 * n
         else:
             nueva = np.concatenate([[0], np.cumsum(self.corpus.col["nueva"][: off[-1]])])

@@ -1,0 +1,8 @@
+# GRU bidireccional de línea de base para T4c (cambio de tamaño de empresa sí/no) (sin pre-entrenar).
+semilla: 0
+datos: {corpus: data/processed/corpus, t1: data/processed/tareas/t4c.parquet, etiqueta: y, fin_ventana: 239,
+        eventos_compactos: false, max_length: 2560, tamano_lote: 32, num_workers: 9}
+preentrenado: ~/labor2vec/runs/pre_150ep/modelo_final.pt   # sólo para leer vocab_size y n_tokens_fondo
+ajuste: {tipo: gru, n_clases: 2, perdida: balanceada, lr: 0.001, decaimiento_epoca: 0.8, weight_decay_cabeza: 0.001, weight_decay_encoder: 0.0}
+entrenamiento: {salida: runs/t4c_gru_s0, monitor: aul, precision: bf16-mixed, acumular: 2, pasos_por_epoca: 150, epocas_min: 5,
+                epocas_max: 35, paciencia: 5, clip_gradiente: 1.0, guardar_cada_pasos: 150, log_cada_pasos: 10}

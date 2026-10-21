@@ -13,7 +13,18 @@ Tareas (cada una con su parquet en `data/processed/tareas/`, columna `y`):
 - T4 `t4.parquet`: tamaño de la empresa principal respecto de 2015: 0 más chica, 1 igual, 2 más grande
   (`tramo_empleo` 1 = más de 200 empleados: un número menor es una empresa más grande).
 
-    python -m labor2vec.tareas.derivadas
+Variantes de la fase 8 (plans/PLAN_fase_8.md), derivadas de las tablas anteriores (`--variantes` las reconstruye sin
+volver a leer el panel):
+- T2c `t2c.parquet`: cambio de quintil entre 2015 y 2019: 0 baja, 1 igual, 2 sube (ordinal). Cohorte de T2.
+- T3d `t3d.parquet`: destino de la letra entre quienes la cambian (`y` de T3 = 1): las 5 letras de destino más frecuentes
+  en train (0 la más frecuente) y 5 = otras. Nominal.
+- T4c `t4c.parquet`: 1 si el tramo de tamaño de 2019 difiere del de 2015. Cohorte de T4.
+
+Continuidad (fase 8): `continuidad.parquet` marca, para cada persona de la cohorte de T1, si su relación principal de 2015
+**continúa después de 2015-12** (ahí el «último valor» de rama, provincia y antigüedad puede venir del futuro) o terminó en
+2015-12 o antes (sin fuga posible). `--continuidad` lo calcula leyendo el panel.
+
+    python -m labor2vec.tareas.derivadas [--variantes | --continuidad]
 """
 
 from pathlib import Path
@@ -21,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from labor2vec.tareas.t1 import ANIO_CORTE, _ventana
+from labor2vec.tareas.t1 import ANIO_CORTE, CORTE, _ventana
 from labor2vec.utiles.duck import conectar
 from labor2vec.utiles.rutas import PANEL, T1, TAREAS
 
@@ -92,12 +103,63 @@ def tablas(estado: pl.DataFrame) -> dict[str, pl.DataFrame]:
     return {"t2": t2, "t3": t3, "t4": t4}
 
 
-def construir(panel: Path = PANEL, t1: Path = T1, salida: Path = TAREAS) -> dict[str, pl.DataFrame]:
-    estado = conectar().execute(sql_estado(panel, t1)).pl()
-    out = tablas(estado)
+N_DESTINOS = 5
+
+
+def sql_continuidad(panel: Path, t1: Path) -> str:
+    """Una fila por persona de la cohorte: `ultimo_mes` de su relación principal de 2015 y `continua` (ultimo_mes > 2015-12).
+    Relación principal = la de más meses en 2015 (desempate por mayor remuneración, luego por id), como en `sql_estado`."""
+    a0, a1 = _ventana(ANIO_CORTE)
+    return f"""
+WITH coh AS (SELECT id_trabajador FROM '{t1}'),
+rel AS (
+    SELECT p.id_trabajador, p.id_relacion,
+           count(*) FILTER (WHERE p.mes_idx BETWEEN {a0} AND {a1}) AS meses,
+           coalesce(sum(p.rem_tot) FILTER (WHERE p.mes_idx BETWEEN {a0} AND {a1}), 0) AS rem,
+           max(p.mes_idx) AS ultimo_mes
+    FROM '{panel}' p JOIN coh USING (id_trabajador) GROUP BY ALL),
+principal AS (
+    SELECT id_trabajador, ultimo_mes FROM (
+        SELECT *, row_number() OVER (PARTITION BY id_trabajador ORDER BY meses DESC, rem DESC, id_relacion) AS rk
+        FROM rel WHERE meses > 0) WHERE rk = 1)
+SELECT id_trabajador, ultimo_mes, ultimo_mes > {CORTE} AS continua FROM principal ORDER BY id_trabajador
+"""
+
+
+def continuidad(panel: Path = PANEL, t1: Path = T1, salida: Path = TAREAS) -> pl.DataFrame:
+    df = conectar().execute(sql_continuidad(panel, t1)).pl()
+    Path(salida).mkdir(parents=True, exist_ok=True)
+    df.write_parquet(Path(salida) / "continuidad.parquet")
+    return df
+
+
+def variantes(t2: pl.DataFrame, t3: pl.DataFrame, t4: pl.DataFrame) -> dict[str, pl.DataFrame]:
+    """T2c, T3d y T4c a partir de las tablas de T2, T3 y T4 (mismos splits)."""
+    t2c = t2.with_columns((pl.col("y").cast(pl.Int16) - pl.col("q2015")).sign().cast(pl.Int8).add(1).alias("y_q"),
+                          pl.col("y").alias("q2019")).drop("y").rename({"y_q": "y"})
+    cambian = t3.filter(pl.col("y") == 1)
+    top = (cambian.filter(pl.col("split") == "train").group_by("letra2019").len()
+           .sort(["len", "letra2019"], descending=[True, False])["letra2019"].to_list()[:N_DESTINOS])
+    codigo = {int(letra): k for k, letra in enumerate(top)}
+    t3d = cambian.with_columns(
+        pl.col("letra2019").map_elements(lambda x: codigo.get(int(x), N_DESTINOS), return_dtype=pl.Int8).alias("y_d")
+    ).drop("y").rename({"y_d": "y"})
+    t4c = t4.with_columns((pl.col("y") != 1).cast(pl.Int8).alias("y_c"), pl.col("y").alias("direccion")).drop("y").rename(
+        {"y_c": "y"})
+    return {"t2c": t2c, "t3d": t3d, "t4c": t4c}
+
+
+def guardar(out: dict[str, pl.DataFrame], salida: Path) -> None:
     Path(salida).mkdir(parents=True, exist_ok=True)
     for nombre, df in out.items():
         df.write_parquet(Path(salida) / f"{nombre}.parquet")
+
+
+def construir(panel: Path = PANEL, t1: Path = T1, salida: Path = TAREAS) -> dict[str, pl.DataFrame]:
+    estado = conectar().execute(sql_estado(panel, t1)).pl()
+    out = tablas(estado)
+    out |= variantes(out["t2"], out["t3"], out["t4"])
+    guardar(out, salida)
     return out
 
 
@@ -114,4 +176,15 @@ def resumen(out: dict[str, pl.DataFrame]) -> str:
 
 
 if __name__ == "__main__":
-    print(resumen(construir()))
+    import sys
+
+    if "--continuidad" in sys.argv:
+        df = continuidad()
+        print(f"{df.height} personas; continúan después de 2015-12: {df['continua'].mean():.3f}")
+    elif "--variantes" in sys.argv:
+        base = {t: pl.read_parquet(TAREAS / f"{t}.parquet") for t in ("t2", "t3", "t4")}
+        nuevas = variantes(**base)
+        guardar(nuevas, TAREAS)
+        print(resumen(base | nuevas))
+    else:
+        print(resumen(construir()))

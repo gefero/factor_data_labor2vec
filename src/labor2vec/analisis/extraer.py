@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader
 from labor2vec.entrenar import _ruta, cargar_config
 from labor2vec.modelo.clasificador import ClasificadorT1
 from labor2vec.tareas.datos import DataModuleT1, collate
-from labor2vec.tokens.documento import Opciones
+from labor2vec.tokens.documento import Opciones, opciones_de
 from labor2vec.tokens.vocabulario import N_ESPECIALES
 
 
@@ -174,7 +174,7 @@ def main(argv=None) -> None:
 
     cfg = cargar_config(_ruta(args.config), args.cambios)
     d = cfg["datos"]
-    op = Opciones(max_length=d["max_length"], fin_ventana=d["fin_ventana"], eventos_compactos=d["eventos_compactos"])
+    op = opciones_de(d)
     dm = DataModuleT1(_ruta(d["corpus"]), None, op, _ruta(d["t1"]), d["etiqueta"], d["tamano_lote"], d["num_workers"],
                       cfg["semilla"])
     dm.setup()

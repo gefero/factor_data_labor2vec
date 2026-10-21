@@ -47,14 +47,14 @@ def atributos(ds: DatasetT1, n_vocab: int) -> np.ndarray:
 
 
 # columna con el estado de 2015 en la tabla de cada tarea (línea de base de «estado actual»)
-ESTADO = {"t2": "q2015", "t3": "letra2015", "t4": "tramo2015"}
+ESTADO = {"t2": "q2015", "t3": "letra2015", "t4": "tramo2015", "t2c": "q2015", "t3d": "letra2015", "t4c": "tramo2015"}
 
 
 def cargar(corpus=CORPUS, ruta_t1=T1, etiqueta: str = "y_2019", fin_ventana: int = 239, max_length: int = 2560,
-           estado: str | None = None) -> dict:
+           estado: str | None = None, atributos_evento: str = "todos") -> dict:
     """Atributos, etiquetas e ids de train/val/test. Con `estado` agrega su codificación one-hot (categorías de train)."""
     vocab = Vocabulario.cargar(Path(corpus) / "vocabulario.parquet", Path(corpus) / "ramas.parquet")
-    op = Opciones(max_length=max_length, fin_ventana=fin_ventana)
+    op = Opciones(max_length=max_length, fin_ventana=fin_ventana, atributos=atributos_evento)
     datos = {}
     for split in ("train", "val", "test"):
         ds = DatasetT1(Path(corpus) / f"eventos_{split}", vocab, op, False, ruta_t1, etiqueta)
@@ -168,20 +168,22 @@ def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lo
     return predecir("val"), predecir("test")
 
 
-MONITOR = {"t1": "aul", "t2": "qwk", "t3": "aul", "t4": "auc_macro"}
+MONITOR = {"t1": "aul", "t2": "qwk", "t3": "aul", "t4": "auc_macro", "t2c": "auc_macro", "t3d": "auc_macro", "t4c": "aul"}
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--tarea", default="t1", choices=["t1", "t2", "t3", "t4"])
+    ap.add_argument("--tarea", default="t1", choices=list(MONITOR))
+    ap.add_argument("--atributos", default="todos", choices=["todos", "sin_ultimo_valor"],
+                    help="sin_ultimo_valor: el documento sin rama, provincia ni antigüedad (fase 8)")
     ap.add_argument("--salida")
     ap.add_argument("--semillas", type=int, default=3)
     args = ap.parse_args(argv)
     t = args.tarea
-    salida = Path(args.salida or f"runs/{t}_tab")
+    salida = Path(args.salida or f"runs/{t}_{'uv_' if args.atributos != 'todos' else ''}tab")
     salida = salida if salida.is_absolute() else RAIZ / salida
     ruta, etiqueta = (T1, "y_2019") if t == "t1" else (TAREAS / f"{t}.parquet", "y")
-    datos = cargar(ruta_t1=ruta, etiqueta=etiqueta, estado=ESTADO.get(t))
+    datos = cargar(ruta_t1=ruta, etiqueta=etiqueta, estado=ESTADO.get(t), atributos_evento=args.atributos)
     print({s: (len(d["y"]), np.bincount(d["y"]).tolist()) for s, d in datos.items() if s != "n_clases"})
     escribir(salida / "tabla_vida", datos, *logistica(datos, "edad_sexo"), ruta)
     escribir(salida / "logistica", datos, *logistica(datos), ruta)

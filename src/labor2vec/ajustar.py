@@ -28,7 +28,7 @@ from lightning.pytorch.loggers import CSVLogger
 from labor2vec.entrenar import GuardiaNaN, ParadaSegura, Rendimiento, _ruta, cargar_config
 from labor2vec.modelo.clasificador import ClasificadorT1
 from labor2vec.tareas.datos import DataModuleT1
-from labor2vec.tokens.documento import Opciones
+from labor2vec.tokens.documento import opciones_de
 
 
 def hp_encoder(cfg: dict) -> dict:
@@ -38,7 +38,7 @@ def hp_encoder(cfg: dict) -> dict:
 
 def preparar(cfg: dict, epoca_inicial: int = 0, pre_cargado: bool = True):
     d, ft = cfg["datos"], cfg.get("ajuste", {})
-    op = Opciones(max_length=d["max_length"], fin_ventana=d["fin_ventana"], eventos_compactos=d["eventos_compactos"])
+    op = opciones_de(d)
     dm = DataModuleT1(_ruta(d["corpus"]), None, op, _ruta(d["t1"]), d["etiqueta"], d["tamano_lote"],
                       d["num_workers"], cfg["semilla"], epoca_inicial)
     dm.setup()

@@ -26,7 +26,7 @@ from lightning.pytorch.loggers import CSVLogger
 from labor2vec.modelo.config import HPARAMS_PAPER, hparams
 from labor2vec.modelo.pretrain import TransformerEncoder
 from labor2vec.tokens.datos import DataModuleMLER
-from labor2vec.tokens.documento import N_FONDO, Opciones
+from labor2vec.tokens.documento import N_FONDO, opciones_de
 from labor2vec.tokens.linea_base import logp_unigrama
 from labor2vec.tokens.vocabulario import Vocabulario
 from labor2vec.utiles.rutas import RAIZ
@@ -115,8 +115,7 @@ def preparar(cfg: dict, epoca_inicial: int = 0):
     corpus = _ruta(d["corpus"])
     vocab = Vocabulario.cargar(corpus / "vocabulario.parquet", corpus / "ramas.parquet")
     mask_ratio = m.get("mask_ratio", HPARAMS_PAPER["mask_ratio"])
-    op = Opciones(max_length=d["max_length"], fin_ventana=d["fin_ventana"], eventos_compactos=d["eventos_compactos"],
-                  mask_ratio=mask_ratio)
+    op = opciones_de(d, mask_ratio=mask_ratio)
     dm = DataModuleMLER(corpus, vocab, op, d["tamano_lote"], d["num_workers"], cfg["semilla"], epoca_inicial)
     dm.setup()
 
