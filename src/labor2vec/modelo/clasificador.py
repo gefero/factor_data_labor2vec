@@ -44,12 +44,16 @@ class AttentionDecoder(nn.Module):
         self.contexto = nn.Parameter(torch.randn(ancho // 2) * 0.05)
         self.salida = nn.Linear(ancho, n_clases)
 
-    def forward(self, x, padding_mask):
+    def resumen(self, x, padding_mask):
+        """Vector de la persona: el *pooling* por atención, justo antes de la capa lineal de salida."""
         h = self.dropout(self.norm(swish(self.ff(x))))
         s = (torch.tanh(self.pool(h)) @ self.contexto).float()
         s = s.masked_fill(~padding_mask.bool(), float("-inf"))
         w = torch.softmax(s + torch.log(torch.sigmoid(s) + 1e-12), dim=-1)  # SigSoftmax
-        return self.salida(torch.einsum("bs,bsh->bh", w.to(h.dtype), h))
+        return torch.einsum("bs,bsh->bh", w.to(h.dtype), h)
+
+    def forward(self, x, padding_mask):
+        return self.salida(self.resumen(x, padding_mask))
 
 
 def perdida_balanceada(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:

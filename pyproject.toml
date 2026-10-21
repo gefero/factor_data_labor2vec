@@ -27,6 +27,7 @@ analisis = [
     "scikit-learn>=1.5",
     "matplotlib>=3.9",
     "pacmap>=0.8",
+    "umap-learn>=0.5",
     "plotly>=5.24",
 ]
 cpu = ["torch==2.11.0", "labor2vec[modelo]"]
