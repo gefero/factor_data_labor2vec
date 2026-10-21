@@ -1,0 +1,41 @@
+# Ajuste fino de T4 (tamaño de empresa 2019 respecto de 2015: más chica / igual / más grande) desde el modelo pre-entrenado. Plan: plans/PLAN_fase_6b.md.
+# Se sobrescribe desde la línea de comandos: --set semilla=1 --set ajuste.tipo=gru
+semilla: 0
+
+datos:
+  corpus: data/processed/corpus
+  t1: data/processed/tareas/t4.parquet   # tabla de etiquetas de la tarea
+  etiqueta: y
+  fin_ventana: 239            # historia hasta 2015-12
+  eventos_compactos: false
+  max_length: 2560
+  tamano_lote: 32
+  num_workers: 9
+
+preentrenado: ~/labor2vec/runs/pre_150ep/modelo_final.pt   # de acá salen los hiperparámetros del encoder
+
+# Ver FT_DEFECTO en modelo/clasificador.py. Valores del original (conf/experiment/eos.yaml).
+ajuste:
+  tipo: transformer           # transformer | gru
+  desde_cero: false           # true = el mismo transformer sin pre-entrenar
+  n_clases: 3
+  perdida: ordinal          # balanceada | ordinal (CDW + focal + suavizado)
+  congelar_embeddings: true
+  lr: 0.001                   # el elegido por validación en T1
+  decaimiento_capa: 0.95
+  decaimiento_epoca: 0.8
+  weight_decay_cabeza: 0.01
+  weight_decay_encoder: 0.0   # el original nunca llega a aplicarlo al encoder (error en su código)
+
+entrenamiento:
+  salida: runs/t4_l2v_s0
+  precision: bf16-mixed
+  acumular: 2                 # lote efectivo = 64
+  pasos_por_epoca: 150        # 9.600 secuencias, como el original
+  epocas_min: 5
+  epocas_max: 35
+  monitor: auc_macro        # métrica de validación para la parada temprana y el mejor checkpoint
+  paciencia: 5
+  clip_gradiente: 1.0
+  guardar_cada_pasos: 150
+  log_cada_pasos: 10

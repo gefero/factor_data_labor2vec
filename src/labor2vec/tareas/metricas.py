@@ -108,6 +108,22 @@ def todas(y, p, umbral: float = 0.5) -> dict:
     return {"aul": aul(y, p), "auc": auc(y, p), "pr_auc": pr_auc(y, p), **corregidas(y, p, umbral)}
 
 
+def _bootstrap(y, ps: list, f, n: int, semilla: int) -> dict:
+    """Bootstrap estratificado por clase de `f(y, p) -> dict`; cada réplica promedia `f` entre las semillas (`ps`)."""
+    y = np.asarray(y).astype(int)
+    ps = [np.asarray(p, dtype=np.float64) for p in ps]
+    rng = np.random.default_rng(semilla)
+    por_clase = [np.flatnonzero(y == k) for k in np.unique(y)]
+    base = {k: np.mean([f(y, p)[k] for p in ps]) for k in f(y, ps[0])}
+    muestras = {k: [] for k in base}
+    for _ in range(n):
+        idx = np.concatenate([rng.choice(c, len(c)) for c in por_clase])
+        res = [f(y[idx], p[idx]) for p in ps]
+        for k in base:
+            muestras[k].append(np.mean([r[k] for r in res]))
+    return {k: (float(base[k]), *np.percentile(muestras[k], [2.5, 97.5]).tolist()) for k in base}
+
+
 def bootstrap(y, ps: list, n: int = 1000, semilla: int = 0, umbral: float = 0.5) -> dict:
     """IC al 95 % por bootstrap estratificado (positivos y negativos se remuestrean por separado).
 
@@ -115,15 +131,57 @@ def bootstrap(y, ps: list, n: int = 1000, semilla: int = 0, umbral: float = 0.5)
     semilla y se promedia, de modo que el intervalo corresponde a la media entre semillas. Devuelve
     {métrica: (media entre semillas en la muestra completa, inferior, superior)}.
     """
-    y = np.asarray(y).astype(bool)
-    ps = [np.asarray(p, dtype=np.float64) for p in ps]
-    rng = np.random.default_rng(semilla)
-    pos, neg = np.flatnonzero(y), np.flatnonzero(~y)
-    base = {k: np.mean([todas(y, p, umbral)[k] for p in ps]) for k in todas(y, ps[0], umbral)}
-    muestras = {k: [] for k in base}
-    for _ in range(n):
-        idx = np.concatenate([rng.choice(pos, len(pos)), rng.choice(neg, len(neg))])
-        res = [todas(y[idx], p[idx], umbral) for p in ps]
-        for k in base:
-            muestras[k].append(np.mean([r[k] for r in res]))
-    return {k: (float(base[k]), *np.percentile(muestras[k], [2.5, 97.5]).tolist()) for k in base}
+    return _bootstrap(y, ps, lambda yy, p: todas(yy, p, umbral), n, semilla)
+
+
+# ---- multiclase y ordinal (T2: 5 quintiles, T4: 3 clases ordenadas) ----------------------------------------------
+def _confusion(y, pred, k: int) -> np.ndarray:
+    m = np.zeros((k, k))
+    np.add.at(m, (np.asarray(y, dtype=int), np.asarray(pred, dtype=int)), 1)
+    return m
+
+
+def qwk(y, pred, k: int) -> float:
+    """Kappa cuadrático ponderado (Cohen): 1 = acuerdo perfecto, 0 = el del azar."""
+    o = _confusion(y, pred, k)
+    i = np.arange(k)
+    w = (i[:, None] - i[None, :]) ** 2 / max(k - 1, 1) ** 2
+    e = np.outer(o.sum(1), o.sum(0)) / o.sum()
+    den = (w * e).sum()
+    return float(1 - (w * o).sum() / den) if den > 0 else 0.0
+
+
+def mae(y, pred) -> float:
+    return float(np.mean(np.abs(np.asarray(y, dtype=int) - np.asarray(pred, dtype=int))))
+
+
+def f1_macro(y, pred, k: int) -> float:
+    o = _confusion(y, pred, k)
+    presentes = o.sum(1) > 0
+    tp = np.diag(o)
+    den = o.sum(1) + o.sum(0)
+    f1 = np.divide(2 * tp, den, out=np.zeros(k), where=den > 0)
+    return float(f1[presentes].mean())
+
+
+def exactitud_balanceada(y, pred, k: int) -> float:
+    """Promedio de la exhaustividad de cada clase presente."""
+    o = _confusion(y, pred, k)
+    presentes = o.sum(1) > 0
+    return float((np.diag(o)[presentes] / o.sum(1)[presentes]).mean())
+
+
+def multiclase(y, probs) -> dict:
+    """QWK, MAE, F1 macro, exactitud balanceada y AUC uno-contra-resto (macro y por clase) con la clase más probable."""
+    y, probs = np.asarray(y, dtype=int), np.asarray(probs, dtype=np.float64)
+    k = probs.shape[1]
+    pred = probs.argmax(1)
+    aucs = [auc(y == c, probs[:, c]) for c in range(k)]
+    return {"qwk": qwk(y, pred, k), "mae": mae(y, pred), "f1_macro": f1_macro(y, pred, k),
+            "exactitud_bal": exactitud_balanceada(y, pred, k), "auc_macro": float(np.nanmean(aucs)),
+            **{f"auc_c{c}": float(a) for c, a in enumerate(aucs)}}
+
+
+def bootstrap_multi(y, ps: list, n: int = 1000, semilla: int = 0) -> dict:
+    """Como `bootstrap`, para matrices de probabilidades (n, K); se remuestrea dentro de cada clase."""
+    return _bootstrap(y, ps, multiclase, n, semilla)

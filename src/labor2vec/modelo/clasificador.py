@@ -26,21 +26,23 @@ FT_DEFECTO = dict(
     congelar_encoder=False,        # sonda lineal: se entrena sólo la cabeza y el encoder queda fijo y en eval
     lr=0.01, decaimiento_capa=0.95, decaimiento_epoca=0.8, weight_decay_cabeza=0.01, weight_decay_encoder=0.0,
     dropout_cabeza=0.1, umbral=0.5,
+    n_clases=2,                    # T1 y T3: 2; T2: 5 quintiles; T4: 3 clases ordenadas
+    perdida="balanceada",          # balanceada | ordinal (CDW + focal + suavizado, como el original)
 )
 
 
 class AttentionDecoder(nn.Module):
     """Cabeza del original: ff + Swish + ScaleNorm + AlphaDropout, *pooling* por atención (tanh y contexto aprendido,
-    SigSoftmax enmascarado) y capa lineal a 2 clases."""
+    SigSoftmax enmascarado) y capa lineal a `n_clases`."""
 
-    def __init__(self, ancho: int, dropout: float = 0.1, eps: float = 1e-6):
+    def __init__(self, ancho: int, dropout: float = 0.1, eps: float = 1e-6, n_clases: int = 2):
         super().__init__()
         self.ff = nn.Linear(ancho, ancho)
         self.norm = ScaleNorm(ancho, eps)
         self.dropout = nn.AlphaDropout(dropout)
         self.pool = nn.Linear(ancho, ancho // 2)
         self.contexto = nn.Parameter(torch.randn(ancho // 2) * 0.05)
-        self.salida = nn.Linear(ancho, 2)
+        self.salida = nn.Linear(ancho, n_clases)
 
     def forward(self, x, padding_mask):
         h = self.dropout(self.norm(swish(self.ff(x))))
@@ -51,11 +53,36 @@ class AttentionDecoder(nn.Module):
 
 
 def perdida_balanceada(logits: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    """0,5 · NLL media de los positivos + 0,5 · NLL media de los negativos (la «asimétrica PU» del código original)."""
+    """Promedio, entre las clases presentes en el lote, de la NLL media de cada clase. Con 2 clases es 0,5 · NLL media de
+    los positivos + 0,5 · NLL media de los negativos (la «asimétrica PU» del código original)."""
     nll = F.cross_entropy(logits.float(), y, reduction="none")
-    pos = y == 1
-    partes = [nll[m].mean() for m in (pos, ~pos) if m.any()]
-    return sum(partes) * (0.5 if len(partes) == 2 else 1.0)
+    partes = [nll[y == c].mean() for c in torch.unique(y)]
+    return sum(partes) / len(partes)
+
+
+def cdw_ce(logits: torch.Tensor, y: torch.Tensor, alpha: float = 1.0) -> torch.Tensor:
+    """Entropía cruzada ponderada por la distancia entre clases (CDW-CE, `CDW_CELoss` del original con transformación
+    logarítmica): -Σ_i log(1 - p_i) · log(1 + |i - y|)^alpha, que castiga más que el modelo ponga masa lejos de la clase
+    verdadera. La clase verdadera pesa 0."""
+    p = torch.softmax(logits.float(), -1)
+    clases = torch.arange(p.shape[-1], device=p.device)
+    w = torch.log1p((clases[None, :] - y[:, None]).abs().float()) ** alpha
+    return -(torch.log(1 - p + 1e-5) * w).sum(-1).mean()
+
+
+def focal(logits: torch.Tensor, y: torch.Tensor, gamma: float = 2.0) -> torch.Tensor:
+    """Pérdida focal: -(1 - p_y)^gamma · log p_y."""
+    logp = torch.log_softmax(logits.float(), -1).gather(1, y[:, None])[:, 0]
+    return (-((1 - logp.exp()) ** gamma) * logp).mean()
+
+
+def perdida_ordinal(logits: torch.Tensor, y: torch.Tensor, pesos=(0.3, 1.0, 0.1), gamma: float = 2.0) -> torch.Tensor:
+    """0,3 · CDW-CE + 1 · focal + 0,1 · suavizado de etiquetas (entropía cruzada contra la distribución uniforme).
+
+    Son los pesos fijos del paper; el código original los combina con una ponderación adaptativa (CoV-weighting) y no se
+    pudo verificar cuál produjo sus resultados. Se usa softmax común (el original aplica SigSoftmax)."""
+    suavizado = -torch.log_softmax(logits.float(), -1).mean(-1).mean()
+    return pesos[0] * cdw_ce(logits, y) + pesos[1] * focal(logits, y, gamma) + pesos[2] * suavizado
 
 
 class ClasificadorT1(pl.LightningModule):
@@ -69,7 +96,7 @@ class ClasificadorT1(pl.LightningModule):
         else:
             self.encoder = Transformer(hp)
             ancho = hp.hidden_size
-        self.cabeza = AttentionDecoder(ancho, self.ft.dropout_cabeza)
+        self.cabeza = AttentionDecoder(ancho, self.ft.dropout_cabeza, n_clases=self.ft.n_clases)
         self._acum = []
         if self.ft.tipo == "transformer" and self.ft.congelar_encoder:
             for p in self.encoder.parameters():
@@ -102,15 +129,18 @@ class ClasificadorT1(pl.LightningModule):
         x, mascara = batch["input_ids"].long(), batch["padding_mask"].long()
         return self.cabeza(self.encoder(x, mascara), mascara)
 
+    def _perdida(self, logits, y):
+        return perdida_ordinal(logits, y) if self.ft.perdida == "ordinal" else perdida_balanceada(logits, y)
+
     def training_step(self, batch, batch_idx):
-        perdida = perdida_balanceada(self(batch), batch["target"])
+        perdida = self._perdida(self(batch), batch["target"])
         self.log("train/loss", perdida, on_step=True, on_epoch=False, batch_size=len(batch["target"]))
         return perdida
 
     def _evaluar(self, batch):
         logits = self(batch).float()
-        p = torch.softmax(logits, -1)[:, 1]
-        self._acum.append((batch["target"].cpu(), p.cpu(), perdida_balanceada(logits, batch["target"]).cpu()))
+        self._acum.append((batch["target"].cpu(), torch.softmax(logits, -1).cpu(),
+                           self._perdida(logits, batch["target"]).cpu()))
 
     def validation_step(self, batch, batch_idx):
         self._evaluar(batch)
@@ -127,8 +157,8 @@ class ClasificadorT1(pl.LightningModule):
         if not self._acum:
             return
         y = torch.cat([a[0] for a in self._acum]).numpy()
-        p = torch.cat([a[1] for a in self._acum]).numpy()
-        m = metricas.todas(y, p, self.ft.umbral)
+        probs = torch.cat([a[1] for a in self._acum]).numpy()
+        m = metricas.multiclase(y, probs) if self.ft.n_clases > 2 else metricas.todas(y, probs[:, 1], self.ft.umbral)
         self.log_dict({f"{etapa}/{k}": float(v) for k, v in m.items()} | {
             f"{etapa}/loss": float(np.mean([float(a[2]) for a in self._acum]))})
         self._acum = []
@@ -145,7 +175,8 @@ class ClasificadorT1(pl.LightningModule):
 
     @torch.no_grad()
     def predecir(self, loader, dispositivo=None) -> dict:
-        """Probabilidades de positivo para todo el loader: {id, y, p} como arreglos numpy."""
+        """Probabilidades para todo el loader: {id, y, p} como arreglos numpy. `p` es la probabilidad de la clase 1 con
+        2 clases, o la matriz (n, n_clases) con más."""
         self.eval()
         dispositivo = dispositivo or next(self.parameters()).device
         ids, ys, ps = [], [], []
@@ -153,7 +184,8 @@ class ClasificadorT1(pl.LightningModule):
             b = {k: v.to(dispositivo) for k, v in b.items()}
             with torch.autocast(dispositivo.type, dtype=torch.bfloat16, enabled=dispositivo.type == "cuda"):
                 logits = self(b)
-            ps.append(torch.softmax(logits.float(), -1)[:, 1].cpu())
+            probs = torch.softmax(logits.float(), -1)
+            ps.append((probs[:, 1] if self.ft.n_clases == 2 else probs).cpu())
             ids.append(b["id"].cpu())
             ys.append(b["target"].cpu())
         return {"id": torch.cat(ids).numpy(), "y": torch.cat(ys).numpy(), "p": torch.cat(ps).numpy()}

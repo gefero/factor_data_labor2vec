@@ -1,11 +1,15 @@
-"""Ajuste fino de T1 (transformer pre-entrenado, transformer desde cero o GRU) y predicciones de val y test.
+"""Ajuste fino de T1-T4 (transformer pre-entrenado, transformer desde cero o GRU) y predicciones de val y test.
 
     python -m labor2vec.ajustar --config configs/ajuste_t1.yaml [--set a.b=valor ...]
                                 [--reanudar] [--max-minutos N] [--max-pasos N] [--salida DIR]
 
-Reutiliza de `entrenar` la lectura de configuración y los callbacks (corte por tiempo, guardia de NaN, rendimiento). Al
-terminar escribe en la carpeta de salida `modelo_final.pt` (el mejor por `val/aul`) y `predicciones_{val,test}.parquet`
-con `id_trabajador, y_2019, y_2021, p` (p = probabilidad de salir). Con `--reanudar` sigue desde `last.ckpt`.
+Reutiliza de `entrenar` la lectura de configuración y los callbacks (corte por tiempo, guardia de NaN, rendimiento). La
+tarea sale del YAML: `datos.t1` (tabla de etiquetas), `datos.etiqueta`, `ajuste.n_clases`, `ajuste.perdida` y
+`entrenamiento.monitor` (`aul` en las binarias, `qwk` o `auc_macro` en las multiclase).
+
+Al terminar escribe en la carpeta de salida `modelo_final.pt` (el mejor por la métrica de monitoreo de validación) y
+`predicciones_{val,test}.parquet` con `id_trabajador`, las etiquetas (`y_2019` e `y_2021` en T1, `y` en T2-T4) y `p`
+(probabilidad de la clase 1) o `p_0..p_{K-1}`. Con `--reanudar` sigue desde `last.ckpt`.
 """
 
 import argparse
@@ -14,6 +18,7 @@ import time
 from pathlib import Path
 
 import lightning.pytorch as pl
+import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import torch
@@ -43,18 +48,25 @@ def preparar(cfg: dict, epoca_inicial: int = 0, pre_cargado: bool = True):
     return dm, modelo
 
 
+def columnas_prediccion(p, columnas_y: dict) -> dict:
+    """Columnas de predicción: `p` con 2 clases, `p_0..p_{K-1}` con más (p es la matriz (n, K))."""
+    p = np.asarray(p, dtype=np.float64)
+    return {"p": p} if p.ndim == 1 else {f"p_{k}": p[:, k] for k in range(p.shape[1])}
+
+
 def escribir_predicciones(modelo, dm, salida: Path, ruta_t1) -> None:
-    """Predicciones de val y test, con las dos etiquetas de la cohorte para poder evaluar también y_2021."""
-    t = pq.read_table(ruta_t1, columns=["id_trabajador", "y_2019", "y_2021"]).to_pydict()
+    """Predicciones de val y test con las etiquetas de la tabla de la tarea (`y`, o `y_2019` e `y_2021` en T1)."""
+    tabla = pq.read_table(ruta_t1)
+    cols = [c for c in tabla.column_names if c == "y" or c.startswith("y_")]
+    t = tabla.select(["id_trabajador", *cols]).to_pydict()
     fila = {i: k for k, i in enumerate(t["id_trabajador"])}
     dispositivo = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     modelo.to(dispositivo)
     for split in ("val", "test"):
         r = modelo.predecir(getattr(dm, f"{split}_dataloader")(), dispositivo)
         k = [fila[int(i)] for i in r["id"]]
-        pq.write_table(pa.table({"id_trabajador": r["id"], "y_2019": [t["y_2019"][j] for j in k],
-                                 "y_2021": [t["y_2021"][j] for j in k], "p": r["p"]}),
-                       salida / f"predicciones_{split}.parquet")
+        pq.write_table(pa.table({"id_trabajador": r["id"], **{c: [t[c][j] for j in k] for c in cols},
+                                 **columnas_prediccion(r["p"], t)}), salida / f"predicciones_{split}.parquet")
 
 
 def main(argv=None) -> None:
@@ -79,7 +91,8 @@ def main(argv=None) -> None:
     (salida / "config.json").write_text(json.dumps(cfg, indent=2, default=str))
 
     acumular = e.get("acumular", 1)
-    mejor = ModelCheckpoint(salida, filename="mejor", monitor="val/aul", mode="max", save_top_k=1)
+    monitor = f"val/{e.get('monitor', 'aul')}"  # aul (binarias), qwk o auc_macro (multiclase)
+    mejor = ModelCheckpoint(salida, filename="mejor", monitor=monitor, mode="max", save_top_k=1)
     parada = ParadaSegura(last, args.max_minutos * 60 if args.max_minutos else None, args.max_pasos)
     trainer = pl.Trainer(
         min_epochs=e["epocas_min"], max_epochs=e["epocas_max"], precision=e["precision"], accelerator="auto", devices=1,
@@ -87,7 +100,7 @@ def main(argv=None) -> None:
         gradient_clip_val=e.get("clip_gradiente"), gradient_clip_algorithm="value",
         log_every_n_steps=e["log_cada_pasos"], num_sanity_val_steps=0, enable_progress_bar=False,
         callbacks=[ModelCheckpoint(salida, save_last=True, every_n_train_steps=e["guardar_cada_pasos"], save_top_k=0),
-                   mejor, EarlyStopping("val/aul", mode="max", patience=e["paciencia"], min_delta=0.001),
+                   mejor, EarlyStopping(monitor, mode="max", patience=e["paciencia"], min_delta=0.001),
                    parada, GuardiaNaN(), Rendimiento(e["log_cada_pasos"]), LearningRateMonitor("epoch")],
         logger=CSVLogger(salida, name="logs"), default_root_dir=salida)
     t0 = time.time()

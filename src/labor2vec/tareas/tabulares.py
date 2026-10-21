@@ -1,12 +1,15 @@
-"""Líneas de base tabulares de T1: tabla de vida (edad y sexo), regresión logística y FFNN sobre conteos de tokens.
+"""Líneas de base tabulares de T1-T4: tabla de vida (edad y sexo), regresión logística y FFNN sobre conteos de tokens, y
+(en T2-T4) regresión logística con el estado actual del trabajador.
 
 Como en el life2vec original, la entrada es la proporción de cada token (sin especiales ni background) en el documento
 que ve el transformer (misma ventana, mismo recorte a 2560), más sexo y edad (mín-máx entre 25 y 55). Todos se entrenan
-con las clases balanceadas, así que sus probabilidades son comparables con las del transformer.
+con las clases balanceadas, así que sus probabilidades son comparables con las del transformer. La «logística con estado
+actual» usa sólo edad, sexo y el estado de 2015 de la tarea (quintil salarial, letra o tramo de tamaño), una línea de base
+barata que ya incorpora la persistencia.
 
-    python -m labor2vec.tareas.tabulares [--salida runs/t1_tab] [--semillas 3]
+    python -m labor2vec.tareas.tabulares [--tarea t1|t2|t3|t4] [--salida runs/t1_tab] [--semillas 3]
 
-Escribe `runs/t1_tab/<modelo>/predicciones_{val,test}.parquet` con el mismo formato que `ajustar`.
+Escribe `runs/<tarea>_tab/<modelo>/predicciones_{val,test}.parquet` con el mismo formato que `ajustar`.
 """
 
 import argparse
@@ -18,13 +21,14 @@ import pyarrow.parquet as pq
 import torch
 import torch.nn as nn
 
+from labor2vec.ajustar import columnas_prediccion
 from labor2vec.modelo.clasificador import perdida_balanceada
 from labor2vec.modelo.transformer_utils import ScaleNorm, swish
 from labor2vec.tareas import metricas
 from labor2vec.tareas.datos import DatasetT1
 from labor2vec.tokens.documento import N_FONDO, Opciones
 from labor2vec.tokens.vocabulario import N_ESPECIALES, Vocabulario
-from labor2vec.utiles.rutas import CORPUS, RAIZ, T1
+from labor2vec.utiles.rutas import CORPUS, RAIZ, T1, TAREAS
 
 EDAD_MIN, EDAD_MAX = 25, 55
 
@@ -42,50 +46,74 @@ def atributos(ds: DatasetT1, n_vocab: int) -> np.ndarray:
     return x
 
 
-def cargar(corpus=CORPUS, ruta_t1=T1, etiqueta: str = "y_2019", fin_ventana: int = 239, max_length: int = 2560) -> dict:
+# columna con el estado de 2015 en la tabla de cada tarea (línea de base de «estado actual»)
+ESTADO = {"t2": "q2015", "t3": "letra2015", "t4": "tramo2015"}
+
+
+def cargar(corpus=CORPUS, ruta_t1=T1, etiqueta: str = "y_2019", fin_ventana: int = 239, max_length: int = 2560,
+           estado: str | None = None) -> dict:
+    """Atributos, etiquetas e ids de train/val/test. Con `estado` agrega su codificación one-hot (categorías de train)."""
     vocab = Vocabulario.cargar(Path(corpus) / "vocabulario.parquet", Path(corpus) / "ramas.parquet")
     op = Opciones(max_length=max_length, fin_ventana=fin_ventana)
     datos = {}
     for split in ("train", "val", "test"):
         ds = DatasetT1(Path(corpus) / f"eventos_{split}", vocab, op, False, ruta_t1, etiqueta)
         datos[split] = dict(x=atributos(ds, len(vocab)), y=ds.y, id=ds.id)
+    datos["n_clases"] = int(datos["train"]["y"].max()) + 1
+    if estado:
+        t = pq.read_table(ruta_t1, columns=["id_trabajador", estado]).to_pydict()
+        valor = dict(zip(t["id_trabajador"], t[estado]))
+        categorias = sorted({valor[int(i)] for i in datos["train"]["id"]})
+        for split in ("train", "val", "test"):
+            e = np.array([valor[int(i)] for i in datos[split]["id"]])
+            datos[split]["estado"] = (e[:, None] == np.array(categorias)[None, :]).astype(np.float32)
     return datos
 
 
 def escribir(salida: Path, datos: dict, p_val, p_test, ruta_t1=T1) -> None:
-    t = pq.read_table(ruta_t1, columns=["id_trabajador", "y_2019", "y_2021"]).to_pydict()
+    tabla = pq.read_table(ruta_t1)
+    cols = [c for c in tabla.column_names if c == "y" or c.startswith("y_")]
+    t = tabla.select(["id_trabajador", *cols]).to_pydict()
     fila = {i: k for k, i in enumerate(t["id_trabajador"])}
     salida.mkdir(parents=True, exist_ok=True)
     for split, p in (("val", p_val), ("test", p_test)):
         ids = datos[split]["id"]
         k = [fila[int(i)] for i in ids]
-        pq.write_table(pa.table({"id_trabajador": ids, "y_2019": [t["y_2019"][j] for j in k],
-                                 "y_2021": [t["y_2021"][j] for j in k], "p": np.asarray(p, dtype=np.float64)}),
-                       salida / f"predicciones_{split}.parquet")
+        pq.write_table(pa.table({"id_trabajador": ids, **{c: [t[c][j] for j in k] for c in cols},
+                                 **columnas_prediccion(p, t)}), salida / f"predicciones_{split}.parquet")
 
 
-def logistica(datos: dict, columnas=None, C: float = 1.0):
-    """Regresión logística L2 con clases balanceadas. `columnas` elige las entradas (tabla de vida: sexo y edad)."""
+def _entrada(datos: dict, split: str, modo: str) -> np.ndarray:
+    x = datos[split]["x"]
+    if modo == "conteos":
+        return x
+    base = x[:, [-2, -1]]  # sexo y edad
+    return base if modo == "edad_sexo" else np.concatenate([base, datos[split]["estado"]], 1)
+
+
+def logistica(datos: dict, modo: str = "conteos", C: float = 1.0):
+    """Regresión logística L2 con clases balanceadas (multinomial con más de 2 clases). `modo` elige las entradas:
+    `conteos` (proporciones de tokens, sexo y edad), `edad_sexo` (tabla de vida) o `estado` (edad, sexo y estado de 2015)."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
 
-    cols = slice(None) if columnas is None else columnas
-    esc = StandardScaler().fit(datos["train"]["x"][:, cols])
+    esc = StandardScaler().fit(_entrada(datos, "train", modo))
     m = LogisticRegression(C=C, class_weight="balanced", max_iter=1000).fit(
-        esc.transform(datos["train"]["x"][:, cols]), datos["train"]["y"])
-    return [m.predict_proba(esc.transform(datos[s]["x"][:, cols]))[:, 1] for s in ("val", "test")]
+        esc.transform(_entrada(datos, "train", modo)), datos["train"]["y"])
+    p = [m.predict_proba(esc.transform(_entrada(datos, s, modo))) for s in ("val", "test")]
+    return [q[:, 1] if datos["n_clases"] == 2 else q for q in p]
 
 
 class FFNN(nn.Module):
     """3 bloques Linear + Swish + ScaleNorm + AlphaDropout y una capa lineal a 2 clases (`src/models/ffn.py`)."""
 
-    def __init__(self, entrada: int, ancho: int = 646, capas: int = 3, dropout: float = 0.35):
+    def __init__(self, entrada: int, ancho: int = 646, capas: int = 3, dropout: float = 0.35, n_clases: int = 2):
         super().__init__()
         bloques, n = [], entrada
         for _ in range(capas):
             bloques += [nn.Linear(n, ancho), _Swish(), ScaleNorm(ancho), nn.AlphaDropout(dropout)]
             n = ancho
-        self.red = nn.Sequential(*bloques, nn.Linear(ancho, 2))
+        self.red = nn.Sequential(*bloques, nn.Linear(ancho, n_clases))
 
     def forward(self, x):
         return self.red(x)
@@ -96,12 +124,15 @@ class _Swish(nn.Module):
         return swish(x)
 
 
-def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lote: int = 64, lr: float = 1.7e-4):
-    """FFNN con muestreo balanceado, RAdam y parada temprana por AUL de validación. Devuelve (p_val, p_test)."""
+def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lote: int = 64, lr: float = 1.7e-4,
+         monitor: str = "aul"):
+    """FFNN con muestreo balanceado, RAdam y parada temprana por la métrica `monitor` de validación (`aul`, o `qwk` o
+    `auc_macro` en multiclase). Devuelve (p_val, p_test)."""
+    k = datos["n_clases"]
     torch.manual_seed(semilla)
     rng = np.random.default_rng(semilla)
     xt, yt = torch.from_numpy(datos["train"]["x"]), torch.from_numpy(datos["train"]["y"])
-    red = FFNN(xt.shape[1])
+    red = FFNN(xt.shape[1], n_clases=k)
     opt = torch.optim.RAdam(red.parameters(), lr=lr, weight_decay=1e-4, eps=1e-6)
     sched = torch.optim.lr_scheduler.StepLR(opt, 1, 0.9)
     w = (1.0 / np.maximum(np.bincount(datos["train"]["y"], minlength=2), 1))[datos["train"]["y"]]
@@ -110,7 +141,8 @@ def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lo
     def predecir(split):
         red.eval()
         with torch.no_grad():
-            return torch.softmax(red(torch.from_numpy(datos[split]["x"])), -1)[:, 1].numpy()
+            p = torch.softmax(red(torch.from_numpy(datos[split]["x"])), -1).numpy()
+            return p[:, 1] if k == 2 else p
 
     mejor, mejor_estado, sin_mejora = -1.0, None, 0
     for _ in range(epocas):
@@ -123,7 +155,8 @@ def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lo
             torch.nn.utils.clip_grad_value_(red.parameters(), 1.0)
             opt.step()
         sched.step()
-        a = metricas.aul(datos["val"]["y"], predecir("val"))
+        pv = predecir("val")
+        a = metricas.aul(datos["val"]["y"], pv) if k == 2 else metricas.multiclase(datos["val"]["y"], pv)[monitor]
         if a > mejor + 0.001:
             mejor, sin_mejora = a, 0
             mejor_estado = {k: v.clone() for k, v in red.state_dict().items()}
@@ -135,24 +168,30 @@ def ffnn(datos: dict, semilla: int = 0, epocas: int = 35, paciencia: int = 5, lo
     return predecir("val"), predecir("test")
 
 
+MONITOR = {"t1": "aul", "t2": "qwk", "t3": "aul", "t4": "auc_macro"}
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--salida", default="runs/t1_tab")
+    ap.add_argument("--tarea", default="t1", choices=["t1", "t2", "t3", "t4"])
+    ap.add_argument("--salida")
     ap.add_argument("--semillas", type=int, default=3)
-    ap.add_argument("--etiqueta", default="y_2019")
     args = ap.parse_args(argv)
-    salida = Path(args.salida) if Path(args.salida).is_absolute() else RAIZ / args.salida
-    datos = cargar(etiqueta=args.etiqueta)
-    print({s: (len(d["y"]), float(d["y"].mean())) for s, d in datos.items()})
-    escribir(salida / "tabla_vida", datos, *logistica(datos, columnas=[-2, -1]))
-    escribir(salida / "logistica", datos, *logistica(datos))
+    t = args.tarea
+    salida = Path(args.salida or f"runs/{t}_tab")
+    salida = salida if salida.is_absolute() else RAIZ / salida
+    ruta, etiqueta = (T1, "y_2019") if t == "t1" else (TAREAS / f"{t}.parquet", "y")
+    datos = cargar(ruta_t1=ruta, etiqueta=etiqueta, estado=ESTADO.get(t))
+    print({s: (len(d["y"]), np.bincount(d["y"]).tolist()) for s, d in datos.items() if s != "n_clases"})
+    escribir(salida / "tabla_vida", datos, *logistica(datos, "edad_sexo"), ruta)
+    escribir(salida / "logistica", datos, *logistica(datos), ruta)
+    if t in ESTADO:
+        escribir(salida / "logistica_estado", datos, *logistica(datos, "estado"), ruta)
     for s in range(args.semillas):
-        p = ffnn(datos, s)
-        escribir(salida / f"ffnn_s{s}", datos, *p)
-        print(f"ffnn semilla {s}: AUL val {metricas.aul(datos['val']['y'], p[0]):.4f}")
-    for nombre in ("tabla_vida", "logistica"):
-        t = pq.read_table(salida / nombre / "predicciones_val.parquet").to_pydict()
-        print(nombre, f"AUL val {metricas.aul(np.array(t['y_2019']), np.array(t['p'])):.4f}")
+        p = ffnn(datos, s, monitor=MONITOR[t])
+        escribir(salida / f"ffnn_s{s}", datos, *p, ruta)
+        print(f"ffnn semilla {s} listo")
+    print("listo")
 
 
 if __name__ == "__main__":

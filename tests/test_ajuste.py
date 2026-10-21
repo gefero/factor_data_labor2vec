@@ -188,7 +188,7 @@ def test_atributos_son_proporciones(mundo, t1):
 def test_tabulares_de_punta_a_punta(mundo, t1, tmp_path):
     from labor2vec.tareas import tabulares
     datos = tabulares.cargar(mundo["salida"], t1, fin_ventana=CORTE, max_length=128)
-    for modelo in (lambda d: tabulares.logistica(d, columnas=[-2, -1]), tabulares.logistica,
+    for modelo in (lambda d: tabulares.logistica(d, "edad_sexo"), tabulares.logistica,
                    lambda d: tabulares.ffnn(d, 0, epocas=2)):
         p_val, p_test = modelo(datos)
         assert len(p_val) == len(datos["val"]["y"]) and ((0 <= p_test) & (p_test <= 1)).all()
@@ -274,3 +274,116 @@ def test_sonda_lineal_solo_entrena_la_cabeza(mundo, t1, pre):
     assert all(torch.equal(v, antes[k]) for k, v in m.encoder.state_dict().items())
     assert all(p.grad is None for p in m.encoder.parameters())
     assert any(p.grad is not None for p in m.cabeza.parameters())
+
+
+# ---- fase 6b: varias clases y pérdida ordinal ---------------------------------------------------------------------
+def test_perdida_balanceada_con_varias_clases():
+    logits = torch.randn(9, 3)
+    y = torch.tensor([0, 0, 0, 0, 0, 0, 1, 2, 2])  # muy desbalanceado: cada clase pesa lo mismo
+    nll = torch.nn.functional.cross_entropy(logits, y, reduction="none")
+    esperado = (nll[:6].mean() + nll[6:7].mean() + nll[7:].mean()) / 3
+    assert perdida_balanceada(logits, y).item() == pytest.approx(esperado.item())
+
+
+def test_cdw_castiga_segun_la_distancia_a_la_clase_verdadera():
+    from labor2vec.modelo.clasificador import cdw_ce, focal, perdida_ordinal
+    y = torch.tensor([2])
+    seguro = torch.full((1, 5), -20.0)
+    seguro[0, 2] = 20.0
+    assert cdw_ce(seguro, y).item() == pytest.approx(0.0, abs=1e-4) and focal(seguro, y).item() == pytest.approx(0.0, abs=1e-6)
+    # el mismo grado de error pesa más cuanto más lejos cae la masa de la clase verdadera
+    cerca, lejos = torch.full((1, 5), -20.0), torch.full((1, 5), -20.0)
+    cerca[0, 3] = 20.0
+    lejos[0, 0] = 20.0
+    assert cdw_ce(lejos, y) > cdw_ce(cerca, y) > 0
+    assert perdida_ordinal(lejos, y) > perdida_ordinal(cerca, y) > perdida_ordinal(seguro, y)
+
+
+def test_focal_con_gamma_cero_es_entropia_cruzada():
+    from labor2vec.modelo.clasificador import focal
+    logits, y = torch.randn(6, 4), torch.tensor([0, 1, 2, 3, 0, 1])
+    assert focal(logits, y, gamma=0.0).item() == pytest.approx(torch.nn.functional.cross_entropy(logits, y).item(), rel=1e-5)
+
+
+@pytest.mark.parametrize("k", [3, 5])
+def test_sampler_balanceado_con_varias_clases(k):
+    rng = np.random.default_rng(0)
+    y = rng.choice(k, 5000, p=np.array([0.6] + [0.4 / (k - 1)] * (k - 1)))
+    lotes = list(SamplerBalanceado(rng.integers(10, 200, 5000), y, 32, semilla=3))
+    frec = np.bincount(y[np.concatenate(lotes)], minlength=k) / sum(map(len, lotes))
+    assert np.allclose(frec, 1 / k, atol=0.04)
+
+
+@pytest.mark.parametrize("k,perdida,monitor", [(5, "ordinal", "qwk"), (3, "ordinal", "auc_macro"), (2, "balanceada", "aul")])
+def test_ajustar_multiclase_de_punta_a_punta(mundo, pre, tmp_path, k, perdida, monitor):
+    ids = np.arange(1, 61)
+    tabla = tmp_path / "tarea.parquet"
+    pq.write_table(pa.table({"id_trabajador": ids, "edad_corte": 30 + ids % 20, "y": ids % k}), tabla)
+    ruta = _cfg(mundo, tabla, pre, tmp_path, [f"ajuste.n_clases={k}", f"ajuste.perdida={perdida}",
+                                               f"entrenamiento.monitor={monitor}", "datos.etiqueta=y"])
+    ajustar.main(["--config", str(ruta)])
+    run = tmp_path / "run"
+    for split in ("val", "test"):
+        t = pq.read_table(run / f"predicciones_{split}.parquet").to_pydict()
+        cols = ["p"] if k == 2 else [f"p_{c}" for c in range(k)]
+        assert set(t) == {"id_trabajador", "y", *cols}
+        if k > 2:
+            filas = np.column_stack([t[c] for c in cols])
+            assert np.allclose(filas.sum(1), 1.0, atol=1e-5)
+        assert all(0 <= y < k for y in t["y"])
+    ck = torch.load(run / "modelo_final.pt", weights_only=False)
+    ClasificadorT1(ck["hparams"]["hp_encoder"], ck["hparams"]["ft"]).load_state_dict(ck["state_dict"])
+
+
+def test_tabulares_multiclase_y_estado(mundo, tmp_path):
+    from labor2vec.tareas import tabulares
+    ids = np.arange(1, 61)
+    tabla = tmp_path / "tarea.parquet"
+    pq.write_table(pa.table({"id_trabajador": ids, "edad_corte": 30 + ids % 20, "y": ids % 3, "tramo2015": 1 + ids % 4}), tabla)
+    datos = tabulares.cargar(mundo["salida"], tabla, "y", CORTE, 128, estado="tramo2015")
+    assert datos["n_clases"] == 3 and datos["train"]["estado"].shape[1] == 4
+    assert np.allclose(datos["train"]["estado"].sum(1), 1.0)
+    for modelo in (lambda d: tabulares.logistica(d, "estado"), tabulares.logistica,
+                   lambda d: tabulares.ffnn(d, 0, epocas=2, monitor="auc_macro")):
+        p_val, p_test = modelo(datos)
+        assert p_val.shape == (len(datos["val"]["y"]), 3) and np.allclose(p_test.sum(1), 1.0, atol=1e-4)
+    tabulares.escribir(tmp_path / "m", datos, p_val, p_test, tabla)
+    t = pq.read_table(tmp_path / "m" / "predicciones_test.parquet").to_pydict()
+    assert set(t) == {"id_trabajador", "y", "p_0", "p_1", "p_2"}
+
+
+@pytest.mark.parametrize("tarea", ["t2", "t4"])
+def test_evaluar_multiclase(tmp_path, tarea):
+    from labor2vec.tareas import evaluar
+
+    cfg = dict(evaluar.CONFIG[tarea])
+    k = cfg["K"]
+    rng = np.random.default_rng(0)
+    n = 500
+    ids = np.arange(n)
+    y = rng.integers(0, k, n)
+    estado = np.where(rng.random(n) < 0.6, y, rng.integers(0, k, n))
+    tabla = tmp_path / "tarea.parquet"
+    pq.write_table(pa.table({"id_trabajador": ids, "sexo": 1 + ids % 2, "edad_corte": 25 + ids % 31, "q2015": estado}), tabla)
+    cfg["tabla"] = tabla
+    runs = tmp_path / "runs"
+    for carpeta, fuerza in ((f"{tarea}_l2v_s0", 1.5), (f"{tarea}_l2v_s1", 1.2), (f"{tarea}_tab/logistica", 0.5)):
+        (runs / carpeta).mkdir(parents=True)
+        logits = rng.normal(size=(n, k))
+        logits[np.arange(n), y] += fuerza
+        p = np.exp(logits) / np.exp(logits).sum(1, keepdims=True)
+        perm = rng.permutation(n)
+        pq.write_table(pa.table({"id_trabajador": ids[perm], "y": y[perm], **{f"p_{c}": p[perm, c] for c in range(k)}}),
+                       runs / carpeta / "predicciones_test.parquet")
+    modelos = evaluar.cargar_modelos(runs, cfg["patrones"])
+    assert modelos["Transformer pre-entrenado (L2V)"][0]["P"].shape == (n, k)
+    texto, res = evaluar.tabla_multi(modelos, cfg, 20)
+    assert "| Persistencia |" in texto and "| Azar |" in texto and "| Mayoría |" in texto
+    assert res["Transformer pre-entrenado (L2V)"]["qwk"][0] > res["Azar"]["qwk"][0] + 0.2
+    assert "sd" in res["Transformer pre-entrenado (L2V)"] and res["Mayoría"]["qwk"][0] == 0.0
+    assert "mujeres" in evaluar.subgrupos_multi(modelos, cfg)
+    if cfg["estado"]:
+        mov = evaluar.movilidad(modelos, cfg)
+        assert "cambian de quintil" in mov and "Persistencia" in mov
+    evaluar.figura_confusion(modelos, cfg, tmp_path)
+    assert (tmp_path / "confusion.png").stat().st_size > 1000

@@ -119,3 +119,44 @@ def test_umbral_optimo_y_calibracion():
     cal = metricas.calibracion(y, p, 5)
     assert cal.shape == (5, 3) and cal[:, 2].sum() == len(y)
     assert (np.diff(cal[:, 1]) > -0.1).all()
+
+
+# ---- métricas multiclase y ordinales -------------------------------------------------------------------------------
+def _multi(n=1500, k=5, semilla=0):
+    rng = np.random.default_rng(semilla)
+    y = rng.integers(0, k, n)
+    logits = rng.normal(size=(n, k)) * 0.8
+    logits[np.arange(n), y] += 1.2
+    p = np.exp(logits) / np.exp(logits).sum(1, keepdims=True)
+    return y, p
+
+
+def test_qwk_contra_sklearn_y_casos_limite():
+    from sklearn.metrics import cohen_kappa_score
+    y, p = _multi()
+    pred = p.argmax(1)
+    assert metricas.qwk(y, pred, 5) == pytest.approx(cohen_kappa_score(y, pred, weights="quadratic"))
+    assert metricas.qwk(y, y, 5) == pytest.approx(1.0)
+    azar = np.random.default_rng(1).integers(0, 5, len(y))
+    assert abs(metricas.qwk(y, azar, 5)) < 0.08
+    assert metricas.qwk(np.zeros(10, int), np.zeros(10, int), 5) == 0.0  # sin variación: sin definir, devuelve 0
+
+
+def test_mae_f1_exactitud_balanceada_y_auc_macro():
+    from sklearn.metrics import balanced_accuracy_score, f1_score
+    y, p = _multi(semilla=2)
+    pred = p.argmax(1)
+    assert metricas.mae(y, pred) == pytest.approx(np.abs(y - pred).mean())
+    assert metricas.f1_macro(y, pred, 5) == pytest.approx(f1_score(y, pred, average="macro"))
+    assert metricas.exactitud_balanceada(y, pred, 5) == pytest.approx(balanced_accuracy_score(y, pred))
+    r = metricas.multiclase(y, p)
+    assert r["auc_macro"] == pytest.approx(roc_auc_score(y, p, multi_class="ovr", average="macro"))
+    assert r["auc_c0"] == pytest.approx(roc_auc_score(y == 0, p[:, 0]))
+
+
+def test_bootstrap_multi_contiene_el_valor_puntual():
+    y, p = _multi(n=600, k=3)
+    r = metricas.bootstrap_multi(y, [p, p[:, ::-1] * 0 + p], n=60)
+    for media, lo, hi in r.values():
+        assert lo - 1e-9 <= media <= hi + 1e-9 or media == pytest.approx(lo, abs=0.03)
+    assert r["qwk"][2] - r["qwk"][1] < 0.2
