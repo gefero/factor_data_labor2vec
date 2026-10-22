@@ -8,6 +8,8 @@ Lee las predicciones de test que ya escribieron `ajustar`, `tabulares` y `predec
 2. Reajuste con el tiempo destruido (`<tarea>_tiempo_l2v_s*`) contra el modelo original, en T3 y T4.
 3. Sin atributos de último valor (`<tarea>_uv_…`) contra el modelo con todos los atributos, para cada familia de modelos.
 4. Lo mismo, separado por si la relación principal de 2015 continúa después de 2015-12 (`continuidad.parquet`).
+5. Líneas de base con variables de tiempo (fase 8b, `<tarea>_tabt/`): el transformer contra cada una (`--solo tiempo`
+   escribe sólo esta sección en `comparaciones_tiempo.md`).
 La métrica de cada tarea es la de monitoreo: AUL (T1, T3, T4c), QWK (T2) o AUC macro (T4, T2c, T3d).
 """
 
@@ -150,16 +152,61 @@ def continuidad(runs: Path, n_boot: int, res: dict, ruta=DIR_TAREAS / "continuid
     return "\n".join(p for p in partes if p)
 
 
+METRICA_TODAS = {**METRICA, "t2c": "auc_macro", "t3d": "auc_macro", "t4c": "aul"}
+BASES_TIEMPO = {"Regresión logística + tiempo": "{t}_tabt/logistica_t", "FFNN + tiempo": "{t}_tabt/ffnn_t_s*",
+                "Logística con estado actual + tiempo": "{t}_tabt/logistica_estado_t"}
+BASES_SIN_TIEMPO = {"Regresión logística": "{t}_tab/logistica", "FFNN": "{t}_tab/ffnn_s*",
+                    "Logística con estado actual": "{t}_tab/logistica_estado"}
+
+
+def con_tiempo(runs: Path, n_boot: int, res: dict) -> str:
+    """El transformer pre-entrenado contra las líneas de base tabulares con y sin variables de tiempo, con todos los
+    atributos y (T1-T4) sin los de último valor. Diferencia = transformer menos la línea de base."""
+    partes = []
+    for t, metrica in METRICA_TODAS.items():
+        f = metricas.aul if metrica == "aul" else (lambda y, P, m=metrica: metricas.multiclase(y, P)[m])
+        for uv in (False, True):
+            if uv and t not in TAREAS:
+                continue
+            pref = f"{t}_uv" if uv else t
+            tr = cargar(runs, patron("Transformer pre-entrenado", t, pref if uv else None) if t in TAREAS
+                        else f"{t}_l2v_s*", t)
+            if not tr:
+                continue
+            filas = []
+            for nombre, pat in {**BASES_SIN_TIEMPO, **BASES_TIEMPO}.items():
+                b = cargar(runs, pat.format(t=pref), t)
+                if b:
+                    filas.append((nombre, comparar(f, tr, b, n_boot)))
+                    res.setdefault("con_tiempo", {})[f"{pref}_{nombre}"] = filas[-1][1]
+            if filas:
+                cual = "sin atributos de último valor" if uv else "con todos los atributos"
+                partes.append(_tabla(f"### {t.upper()}, {cual}: transformer contra líneas de base "
+                                     f"({NOMBRE_METRICA[metrica]})", "transformer", "línea de base", filas))
+    return "\n".join(p for p in partes if p)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--runs", default="runs")
     ap.add_argument("--bootstrap", type=int, default=1000)
     ap.add_argument("--salida", default=str(INFORMES / "fase8"))
+    ap.add_argument("--solo", choices=["tiempo"], help="tiempo: sólo la comparación con líneas de base con variables "
+                    "de tiempo (fase 8b), en `comparaciones_tiempo.md`")
     args = ap.parse_args(argv)
     runs = Path(args.runs) if Path(args.runs).is_absolute() else RAIZ / args.runs
     salida = Path(args.salida)
     salida.mkdir(parents=True, exist_ok=True)
     res: dict = {}
+    if args.solo == "tiempo":
+        texto = ("# Transformer contra líneas de base con variables de tiempo (fase 8b)\n\n"
+                 "Media entre semillas en test; diferencia = transformer menos línea de base (positiva: gana el "
+                 "transformer), con IC al 95 % por bootstrap pareado. `*` = el IC no incluye el 0.\n\n"
+                 + con_tiempo(runs, args.bootstrap, res))
+        (salida / "comparaciones_tiempo.md").write_text(texto)
+        (salida / "comparaciones_tiempo.json").write_text(json.dumps(res, indent=2, default=float))
+        print(texto)
+        return
     secciones = [control_temporal(runs, args.bootstrap, res), reajuste_tiempo(runs, args.bootstrap, res),
                  sin_ultimo_valor(runs, args.bootstrap, res), continuidad(runs, args.bootstrap, res)]
     texto = ("# Comparaciones de la fase 8 (generado por `tareas.ablaciones`)\n\n"
