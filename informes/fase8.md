@@ -227,3 +227,46 @@ Contraste hecho leyendo el paper original (Savcisens et al., 2023, arXiv 2306.03
 - Model card y mención explícita de que hace falta una auditoría de equidad antes de usarlo.
 
 **Para el paper:** el original muestra que life2vec gana; este trabajo muestra bajo qué condiciones esa ventaja se sostiene. Las diferencias en hubs, TCAV y organización del mapa de personas merecen una nota explícita en la discusión, porque no coinciden con lo que reporta el original.
+
+## Qué tan parecidos son los resultados a los del paper (pruebas comunes)
+
+Solo las pruebas que hacen ambos trabajos. Los datos y las tareas son distintos (registros daneses y mortalidad contra empleo registrado argentino), así que se compara el *patrón* de resultados y no los valores.
+
+| Prueba | Qué tan parecido |
+|---|---|
+| Pre-entrenamiento | No comparable |
+| Espacio de conceptos | **Bastante parecido**, con una diferencia (hubs) |
+| Predicción contra métodos simples | **Parecido en T3 y T4, distinto en T1 y T2** |
+| Espacio de personas | **Distinto** |
+
+**1. Pre-entrenamiento: no comparable.** El paper elige la configuración con una «perplejidad total» que mezcla MLM y SOP (valores de 1,83 a 2,04, Tabla A5) y no reporta perplejidad del enmascarado, AUC del SOP ni variación entre semillas. Nuestro 4,73 no se puede contrastar.
+
+**2. Espacio de conceptos: bastante parecido.**
+- *Ingresos:* el paper dice que los 100 niveles quedan «perfectamente ordenados» en una curva; en el nuestro, los vecinos a ≤ 5 percentiles son 1,00 contra 0,10 del azar. Es lo más parecido.
+- *Años de nacimiento:* el paper muestra que los vecinos de 1963 son 1962 y 1964; los nuestros están ordenados a nivel local, con geometría global curva en los modelos de 150 épocas.
+- *Agrupación por clasificación:* en el paper los clusters son nítidos (capítulos de ICD-10, grupos de ISCO-08); en el nuestro es real pero moderada (ramas vecinas del mismo sector 0,41 contra 0,22 del azar; provincias de la misma región 0,49 contra 0,15).
+- *Robustez:* ambos encuentran espacios reproducibles entre entrenamientos (el paper con un p-valor; nosotros con Spearman 0,72, y 0,74 a 0,86 en salarios y años contra 0,37 a 0,40 en ramas finas).
+- **Diferencia:** el paper no encuentra *hubs*; nosotros sí (los `RAMA2_xx`, y más con más entrenamiento).
+
+**3. Predicción contra métodos simples: parecido en T3, distinto en T1.** Mortalidad del paper contra nuestras T1 y T3 (C-MCC y AUL del transformer y diferencia contra cada método):
+
+| | Paper (mortalidad) | T1 (salida) | T3 (cambio de rama) |
+|---|---|---|---|
+| C-MCC del transformer | 0,413 | 0,143 | 0,244 |
+| contra GRU | 0,369 (+12 %) | 0,146 (−2 %) | 0,208 (+17 %) |
+| contra FFNN | 0,340 (+21 %) | 0,147 (−3 %) | 0,179 (+36 %) |
+| contra logística | 0,149 (+177 %) | 0,159 (−10 %) | 0,192 (+27 %) |
+| AUL del transformer | 0,845 | 0,619 | 0,725 |
+| contra GRU / FFNN / logística | +0,011 / +0,023 / +0,110 | +0,003 / +0,011 / +0,002 | +0,023 / +0,038 / +0,040 |
+
+- En **T3** la ventaja relativa sobre el GRU y la FFNN es del mismo orden que la del paper. En T4 la métrica es otra (AUC macro) y no se calculó el C-MCC, pero la ventaja sobre el GRU (0,772 contra 0,746) y sobre la logística (0,691) también va en esa dirección.
+- En **T1 y T2** el transformer no gana: empata o queda levemente abajo.
+- **La logística es el método más distinto.** En el paper queda muy abajo (C-MCC 0,149 contra 0,413); en nuestras tareas queda pegada al transformer. Probablemente porque nuestras tareas se explican bastante con el estado actual de la persona.
+- El orden del paper (transformer > GRU > FFNN ≫ logística ≫ tabla de vida ≫ azar) se cumple solo a medias: la tabla de vida y el azar quedan al final, pero entre el transformer, el GRU, la FFNN y la logística hay empate en T1 y orden variable en las otras tareas.
+
+**4. Espacio de personas: distinto.**
+- *Mapa:* el del paper se organiza como un continuo de probabilidad de mortalidad (por el resultado que se predice); el nuestro, por quiénes son (salario, rama, edad) y casi no por el resultado (0,742 contra 0,729 del azar).
+- *TCAV:* en el paper funciona (conceptos como directivo, ingreso alto, varón o diagnóstico mental se separan de las direcciones al azar); en el nuestro quedó degenerado (ver `informes/fase7.md`).
+- *Saliency:* mismo método (SmoothGrad); el paper muestra un ejemplo y nosotros un análisis agregado de 2.000 personas (los últimos 24 meses pesan ~2 veces), sin contraparte en el paper.
+
+**Lectura general.** Se replica que la representación aprende estructura real y que, donde la tarea depende de «movimientos» (T3, T4), la ventaja del transformer sobre el GRU y la FFNN es del orden de la del paper. No se replican la ventaja en T1 y T2, la debilidad de la logística, el mapa organizado por el resultado ni TCAV. Una explicación posible, **no probada**: en el paper, la mortalidad depende de una combinación compleja de salud, edad e ingreso; nuestras tareas se explican más con el estado actual de la persona, que un modelo simple con variables de tiempo ya capta (sección 5 de este informe).
