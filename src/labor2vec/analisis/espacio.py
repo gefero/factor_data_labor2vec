@@ -46,6 +46,29 @@ def proporciones(split: str, corpus=CORPUS, ruta_t1=T1) -> tuple[np.ndarray, np.
     return ds.id, x
 
 
+def conteos(split: str, corpus=CORPUS, ruta_t1=T1) -> tuple[np.ndarray, np.ndarray]:
+    """(id, c) con los conteos absolutos de cada token (sin sexo ni edad) de toda la cohorte de T1 del split. Con ellos se
+    recupera lo que las proporciones pierden al dividir por el largo de la historia."""
+    cache = TAREAS / f"conteo_tokens_{split}_v{FIN_VENTANA}.npz"
+    if cache.exists():
+        z = np.load(cache)
+        return z["id"], z["c"]
+    from labor2vec.tareas.datos import DatasetT1
+    from labor2vec.tokens.documento import N_FONDO
+    from labor2vec.tokens.vocabulario import N_ESPECIALES
+
+    vocab = Vocabulario.cargar(Path(corpus) / "vocabulario.parquet", Path(corpus) / "ramas.parquet")
+    op = Opciones(max_length=2560, fin_ventana=FIN_VENTANA, atributos="todos")
+    ds = DatasetT1(Path(corpus) / f"eventos_{split}", vocab, op, False, ruta_t1, "y_2019")
+    c = np.zeros((len(ds), len(vocab) - N_ESPECIALES), dtype=np.float32)
+    for k in range(len(ds)):
+        t = ds[k]["input_ids"][0, N_FONDO:]
+        t = t[t >= N_ESPECIALES] - N_ESPECIALES
+        c[k] = np.bincount(t, minlength=c.shape[1])
+    np.savez(cache, id=ds.id, c=c)
+    return ds.id, c
+
+
 def por_ids(ids_todos: np.ndarray, x: np.ndarray, ids: np.ndarray) -> np.ndarray:
     """Filas de `x` (indexada por `ids_todos`) en el orden de `ids`."""
     pos = {int(i): k for k, i in enumerate(ids_todos)}
@@ -190,6 +213,44 @@ def seccion_sondas(entrada: Path, n_boot: int) -> str:
                 celdas.append(f"{r['valor']:.3f}{extra} [{r['lo']:.3f}, {r['hi']:.3f}]")
             texto.append(f"| {nombre} | " + " | ".join(celdas) + " |")
         texto.append("")
+    return "\n".join(texto)
+
+
+def seccion_conteos(entrada: Path, n_boot: int) -> str:
+    """¿La ventaja del vector sobre las proporciones en las variables de dinámica es sólo información de cantidad?
+    Compara, sobre las variables continuas, el vector `pre` con proporciones, proporciones + tamaño de la historia,
+    conteos absolutos y log(1 + conteos)."""
+    df = pl.read_parquet(personas.CONCEPTOS)
+    prop = {s: proporciones(s) for s in ("val", "test")}
+    cont = {s: conteos(s) for s in ("val", "test")}
+    pre = espacios_de(entrada)["pre"]
+
+    def extra(c):  # tamaño de la historia: eventos totales (log) y tokens distintos
+        return np.stack([np.log1p(c.sum(1)), (c > 0).sum(1)], 1)
+
+    espacios = {"pre (vec)": pre}
+    for nombre, f in {"proporciones": lambda p, c: p,
+                      "proporciones + tamaño de la historia": lambda p, c: np.concatenate([p, extra(c)], 1),
+                      "conteos absolutos": lambda p, c: c,
+                      "log(1 + conteos)": lambda p, c: np.log1p(c),
+                      "log(1 + conteos) + tamaño": lambda p, c: np.concatenate([np.log1p(c), extra(c)], 1)}.items():
+        espacios[nombre] = {s: (pre[s][0], f(por_ids(*prop[s], pre[s][0]), por_ids(*cont[s], pre[s][0]))) for s in pre}
+    filas: dict[str, dict] = {}
+    for nombre, d in espacios.items():
+        (idv, xv), (idt, xt) = d["val"], d["test"]
+        _, wv = objetivos(df, idv, "val")
+        _, wt = objetivos(df, idt, "test")
+        wv, wt = dinamica_estandarizada(wv, wt)
+        filas[nombre] = {k: sonda_continua(xv, wv[k], xt, wt[k], n_boot) for k in wv}
+        print(f"conteos {nombre}", flush=True)
+    sel = list(next(iter(filas.values())))
+    texto = ["## Línea de base con conteos absolutos\n",
+             "R² en test (ridge entrenada en val) de las variables continuas. Si los conteos absolutos igualan al vector "
+             "`pre`, su ventaja sobre las proporciones era información de cantidad (largo de la historia, empleadores "
+             "distintos) y no de secuencia.\n",
+             "| espacio | " + " | ".join(sel) + " |\n|---|" + "---|" * len(sel)]
+    for nombre, f in filas.items():
+        texto.append(f"| {nombre} | " + " | ".join(f"{f[o]['valor']:.3f}" for o in sel) + " |")
     return "\n".join(texto)
 
 
@@ -468,7 +529,7 @@ def seccion_tipologias(entrada: Path, k_perfil: int, n_sil: int) -> str:
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("paso", choices=["proporciones", "sondas", "ejes", "om", "tipologias"])
+    ap.add_argument("paso", choices=["proporciones", "conteos", "sondas", "ejes", "om", "tipologias"])
     ap.add_argument("--entrada", default=str(ENTRADA))
     ap.add_argument("--n-boot", type=int, default=200)
     ap.add_argument("--k", type=int, default=8, help="número de tipos para los perfiles y la validez externa")
@@ -480,6 +541,12 @@ def main(argv=None) -> None:
             t0 = time.time()
             _, x = proporciones(s)
             print(f"{s}: {x.shape} en {time.time() - t0:.0f} s", flush=True)
+        return
+    if args.paso == "conteos":
+        destino = SALIDA / "resultados_conteos.md"
+        destino.write_text("# Fase 9: conteos absolutos (generado por `analisis.espacio`)\n\n"
+                           + seccion_conteos(Path(args.entrada), args.n_boot))
+        print(f"escrito {destino}")
         return
     if args.paso == "om":
         d = distancias_om_test(ids_test(Path(args.entrada)))

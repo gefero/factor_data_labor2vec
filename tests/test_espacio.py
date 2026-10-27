@@ -126,3 +126,29 @@ def test_cortar_y_normalizar():
     lab = espacio.cortar(linkage(x, "ward"), 2)
     assert set(lab) == {0, 1} and len(set(lab[:30])) == 1 and len(set(lab[30:])) == 1 and lab[0] != lab[30]
     assert np.allclose(np.linalg.norm(espacio._normalizar(x), axis=1), 1)
+
+
+def test_conteos_lee_la_cache_y_seccion_conteos_compara_seis_espacios(tmp_path, monkeypatch):
+    from labor2vec.analisis import espacio
+
+    ids = np.arange(100)
+    c = np.random.default_rng(0).integers(0, 5, size=(100, 6)).astype(np.float32)
+    monkeypatch.setattr(espacio, "TAREAS", tmp_path)
+    np.savez(tmp_path / f"conteo_tokens_val_v{espacio.FIN_VENTANA}.npz", id=ids, c=c)
+    i, x = espacio.conteos("val")  # no toca el corpus: lee la caché
+    assert (i == ids).all() and (x == c).all()
+
+    np.savez(tmp_path / f"conteo_tokens_test_v{espacio.FIN_VENTANA}.npz", id=ids, c=c)
+    prop = c / np.maximum(c.sum(1, keepdims=True), 1)
+    y = np.log1p(c.sum(1))  # una variable que sólo los conteos (no las proporciones) pueden dar
+    monkeypatch.setattr(espacio, "proporciones", lambda s: (ids, prop))
+    monkeypatch.setattr(espacio, "espacios_de", lambda e: {"pre": {s: (ids, prop[:, :2]) for s in ("val", "test")}})
+    monkeypatch.setattr(espacio, "objetivos", lambda df, i, s: ({}, {"dinámica: largo": y}))
+    monkeypatch.setattr(espacio, "dinamica_estandarizada", lambda a, b: (a, b))
+    monkeypatch.setattr(espacio.pl, "read_parquet", lambda *a, **k: None)
+    texto = espacio.seccion_conteos(tmp_path, n_boot=5)
+    filas = {f.split("|")[1].strip(): float(f.split("|")[2]) for f in texto.splitlines() if f.startswith("| ") and "---" not in f
+             and not f.startswith("| espacio")}
+    assert len(filas) == 6
+    assert filas["conteos absolutos"] > 0.99 or filas["log(1 + conteos) + tamaño"] > 0.99  # el largo se lee de los conteos
+    assert filas["proporciones"] < 0.5  # y no de las proporciones

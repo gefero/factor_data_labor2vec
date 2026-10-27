@@ -1,0 +1,14 @@
+# Fase 9: conteos absolutos (generado por `analisis.espacio`)
+
+## Línea de base con conteos absolutos
+
+R² en test (ridge entrenada en val) de las variables continuas. Si los conteos absolutos igualan al vector `pre`, su ventaja sobre las proporciones era información de cantidad (largo de la historia, empleadores distintos) y no de secuencia.
+
+| espacio | edad (años) | salario (percentil 2015) | antigüedad (años) | dinámica: antiguedad | dinámica: meses_desde_cambio_empresa | dinámica: meses_desde_cambio_tamano | dinámica: meses_desde_cambio_rama | dinámica: cambios_empresa_12 | dinámica: cambios_empresa_24 | dinámica: cambios_empresa_60 | dinámica: cambios_tamano_12 | dinámica: cambios_tamano_24 | dinámica: cambios_tamano_60 | dinámica: cambios_rama_12 | dinámica: cambios_rama_24 | dinámica: cambios_rama_60 | dinámica: huecos_24 | dinámica: huecos_60 | dinámica: meses_desde_ultimo_registro | dinámica: dif_salario_12 | dinámica: dif_salario_36 | dinámica: hay_dif_12 | dinámica: hay_dif_36 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| pre (vec) | 0.990 | 0.836 | 0.906 | 0.567 | 0.492 | 0.546 | 0.505 | 0.195 | 0.365 | 0.548 | 0.115 | 0.174 | 0.238 | 0.141 | 0.304 | 0.495 | 0.284 | 0.492 | nan | 0.022 | 0.039 | 0.428 | 0.613 |
+| proporciones | 1.000 | 0.801 | 0.506 | 0.309 | 0.261 | 0.270 | 0.272 | 0.071 | 0.139 | 0.220 | 0.019 | 0.028 | 0.043 | 0.049 | 0.097 | 0.171 | 0.054 | 0.130 | nan | 0.009 | 0.017 | 0.002 | 0.071 |
+| proporciones + tamaño de la historia | 1.000 | 0.813 | 0.765 | 0.503 | 0.385 | 0.415 | 0.426 | 0.081 | 0.181 | 0.320 | 0.019 | 0.029 | 0.045 | 0.057 | 0.137 | 0.272 | 0.108 | 0.232 | nan | 0.012 | 0.022 | 0.011 | 0.316 |
+| conteos absolutos | 0.387 | 0.618 | 0.690 | 0.424 | 0.316 | 0.350 | 0.342 | 0.065 | 0.119 | 0.225 | 0.011 | 0.021 | 0.036 | 0.046 | 0.084 | 0.160 | 0.057 | 0.167 | nan | 0.005 | 0.013 | 0.004 | 0.137 |
+| log(1 + conteos) | 0.333 | 0.704 | 0.678 | 0.505 | 0.397 | 0.437 | 0.434 | 0.109 | 0.223 | 0.440 | 0.029 | 0.057 | 0.116 | 0.081 | 0.189 | 0.420 | 0.077 | 0.231 | nan | 0.007 | 0.017 | 0.007 | 0.204 |
+| log(1 + conteos) + tamaño | 0.397 | 0.718 | 0.727 | 0.644 | 0.498 | 0.548 | 0.537 | 0.112 | 0.249 | 0.484 | 0.029 | 0.057 | 0.117 | 0.084 | 0.207 | 0.451 | 0.116 | 0.294 | nan | 0.010 | 0.022 | 0.036 | 0.466 |

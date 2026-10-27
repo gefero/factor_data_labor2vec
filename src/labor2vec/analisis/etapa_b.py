@@ -5,6 +5,7 @@
     python -m labor2vec.analisis.etapa_b intervenciones   # B3: efecto de cambiar una cosa de la historia
     python -m labor2vec.analisis.etapa_b controles        # tiempo contra orden: sondas sobre vectores con fechas u orden permutados
     python -m labor2vec.analisis.etapa_b extras           # encoder sin entrenar y sin «último valor» contra el pre-entrenado
+    python -m labor2vec.analisis.etapa_b techo            # techo de ruido de las tipologías: submuestras, semillas y tokens
 
 Lee `runs/fase7/{pre,t1,t3}/personas.npz` (semilla 0, historia hasta 2015-12) y `runs/fase9/<nombre>/personas.npz`
 (`scripts/cluster/fase9_encolar.sh`) y escribe `informes/fase9/resultados_<paso>.md`. Todo es sobre el test.
@@ -81,6 +82,20 @@ def tipologia(x: np.ndarray, k: int) -> np.ndarray:
     from scipy.cluster.hierarchy import linkage
 
     return espacio.cortar(linkage(espacio._normalizar(x, centrar=True), method="ward"), k)
+
+
+def tipologia_con_muestra(x: np.ndarray, idx: np.ndarray, k: int) -> np.ndarray:
+    """Tipos de TODAS las filas de `x` a partir de un Ward sobre las filas `idx`: se centra con la media de `idx`, se corta en
+    k tipos y cada fila se asigna al centroide (coseno) más cercano. Sirve para comparar dos particiones armadas con
+    muestras distintas sobre las mismas personas."""
+    from scipy.cluster.hierarchy import linkage
+
+    x = np.asarray(x, dtype=np.float64) - np.asarray(x, dtype=np.float64)[idx].mean(0)
+    u = espacio._normalizar(x)
+    tipos = espacio.cortar(linkage(u[idx], method="ward"), k)
+    cent = np.stack([u[idx][tipos == t].mean(0) for t in range(k)])
+    cent /= np.maximum(np.linalg.norm(cent, axis=1, keepdims=True), 1e-12)
+    return (u @ cent.T).argmax(1)
 
 
 def matriz_transicion(antes: np.ndarray, despues: np.ndarray, k: int) -> np.ndarray:
@@ -176,6 +191,48 @@ def seccion_semillas(e7: Path, e9: Path, k: int = 8, n_boot: int = 30) -> str:
     return "\n".join(texto) + "\n"
 
 
+# ---- techo de ruido de las tipologías -----------------------------------------------------------------------------------
+def seccion_techo(e7: Path, e9: Path, k: int = 8, n_rep: int = 5) -> str:
+    """¿Cuánto del desacuerdo entre tipologías de semillas distintas es propio de cortar un continuo? Se arma, con el mismo
+    procedimiento, el Ward de k tipos sobre muestras al azar de la mitad de las personas, y se asignan todas al centroide
+    más cercano. Se compara el ARI (a) entre dos mitades en el MISMO espacio (sólo muestreo; tokens no depende de ninguna
+    semilla de entrenamiento), (b) entre semillas con la misma mitad (sólo semilla) y (c) entre espacios distintos."""
+    c0, c1, c2 = (cargar(e7 / "pre"), cargar(e9 / "pre_s1"), cargar(e9 / "pre_s2"))
+    ref = c0["test"]["id"]
+    pre = {0: c0["test"]["vec"]}
+    for s_, c in ((1, c1), (2, c2)):
+        if c is not None:
+            ok, (x,) = alinear_a(ref, c["test"]["id"], c["test"]["vec"])
+            if ok.all():
+                pre[s_] = x
+    tok = espacio.por_ids(*espacio.proporciones("test"), ref)
+    n = len(ref)
+    filas: dict[str, list[float]] = {"tokens: mitad A contra mitad B (muestreo)": [], "pre semilla 0: mitad A contra B (muestreo)": [],
+                                     "pre: semillas 0 y 1, misma mitad (semilla)": [], "pre: semillas 0 y 2, misma mitad (semilla)": [],
+                                     "tokens contra pre semilla 0, misma mitad (otro espacio)": []}
+    t0 = time.time()
+    for r in range(n_rep):
+        perm = np.random.default_rng(r).permutation(n)
+        a, b = np.sort(perm[: n // 2]), np.sort(perm[n // 2:])
+        ta, tb = tipologia_con_muestra(tok, a, k), tipologia_con_muestra(tok, b, k)
+        pa, pb = tipologia_con_muestra(pre[0], a, k), tipologia_con_muestra(pre[0], b, k)
+        filas["tokens: mitad A contra mitad B (muestreo)"].append(float(adjusted_rand_score(ta, tb)))
+        filas["pre semilla 0: mitad A contra B (muestreo)"].append(float(adjusted_rand_score(pa, pb)))
+        for s_ in (1, 2):
+            if s_ in pre:
+                filas[f"pre: semillas 0 y {s_}, misma mitad (semilla)"].append(
+                    float(adjusted_rand_score(pa, tipologia_con_muestra(pre[s_], a, k))))
+        filas["tokens contra pre semilla 0, misma mitad (otro espacio)"].append(float(adjusted_rand_score(ta, pa)))
+        print(f"techo repetición {r + 1}/{n_rep}: {time.time() - t0:.0f} s", flush=True)
+    texto = ["## Techo de ruido de las tipologías\n",
+             f"Ward de k = {k} tipos sobre una mitad al azar de las {n:,} personas del test (vectores centrados y normalizados), "
+             "con todas las personas asignadas al centroide más cercano; {} repeticiones con mitades distintas. ARI: 1 = "
+             "particiones idénticas, 0 = lo esperable al azar.\n".format(n_rep),
+             "| comparación | ARI medio | mín a máx |\n|---|---|---|"]
+    texto += [f"| {nombre} | {np.mean(v):.3f} | {min(v):.3f} a {max(v):.3f} |" for nombre, v in filas.items() if v]
+    return "\n".join(texto) + "\n"
+
+
 # ---- B2: cortes ------------------------------------------------------------------------------------------------------
 def _vars_tiempo_en(ids: np.ndarray, fin: int) -> dict[str, np.ndarray]:
     crudo = tabulares.variables_de_tiempo("test", ids, CORPUS, T1, fin)
@@ -189,12 +246,14 @@ def seccion_cortes(e7: Path, e9: Path, k: int = 8) -> str:
     base = cargar(e7 / "pre")["test"]
     ids = base["id"]
     vec = {239: base["vec"].astype(np.float64)}
+    presente = {239: np.ones(len(ids), dtype=bool)}  # en un corte temprano el corpus sólo trae a quienes ya tenían eventos
     for corte in (179, 203, 227):
         c = cargar(e9 / f"pre_f{corte}")
         if c is not None:
             ok, (x,) = alinear_a(ids, c["test"]["id"], c["test"]["vec"])
-            if ok.all():
-                vec[corte] = x.astype(np.float64)
+            completo = np.zeros((len(ids), x.shape[1]))
+            completo[ok] = x
+            vec[corte], presente[corte] = completo, ok
     if len(vec) < 2:
         return "## B2. Trayectorias en el espacio\n\nSin datos: faltan las corridas `pre_f179`, `pre_f203` y `pre_f227`.\n"
 
@@ -211,13 +270,15 @@ def seccion_cortes(e7: Path, e9: Path, k: int = 8) -> str:
     tv239 = _vars_tiempo_en(ids, 239)
 
     texto = ["## B2. Trayectorias en el espacio\n",
+             "Personas del test con eventos en cada corte: " + "; ".join(
+                 f"{CORTES[c]}: {int(presente[c].sum()):,}" for c in sorted(vec)) + ".\n",
              "El mismo modelo pre-entrenado, con la historia de cada persona cortada en distintos meses (sólo ve lo anterior al "
              "corte). Sólo se cuentan las personas con al menos 12 meses de historia en el corte. Los tipos son los de un k-means "
              f"de k = {k} sobre los vectores de 2015-12 (centrados y normalizados); los vectores de los cortes anteriores se "
              "asignan al centroide más cercano con el mismo centrado. Los cortes más tempranos tienen menos historia, así que "
              "parte del movimiento es sólo falta de información: por eso se compara por estratos de historia.\n"]
     for corte in sorted(c for c in vec if c < 239):
-        con = primer_mes <= corte - 11
+        con = presente[corte] & (primer_mes <= corte - 11)
         meses_hist = (corte - primer_mes)[con]
         distancia = distancia_coseno_filas(normal(vec[corte])[con], normal(vec[239])[con])
         texto.append(f"### Corte {CORTES[corte]} contra 2015-12 ({int(con.sum()):,} personas con historia)\n")
@@ -329,7 +390,8 @@ def seccion_controles(e7: Path, e9: Path, n_boot: int = 30) -> str:
              "modelo la lee del tiempo; si cae con el orden permutado, depende del orden de los eventos.\n",
              "| entrada | " + " | ".join(cols) + " |\n|---|" + "---|" * len(cols)]
     for nombre, c in corridas.items():
-        texto.append(_fila(nombre, [sondear(c["val"], c["test"], df, n_boot)[x] for x in cols]))
+        r = sondear(c["val"], c["test"], df, n_boot)  # una vez por corrida, no una por columna
+        texto.append(_fila(nombre, [r[x] for x in cols]))
     return "\n".join(texto) + "\n"
 
 
@@ -347,13 +409,14 @@ def seccion_extras(e7: Path, e9: Path, n_boot: int = 30) -> str:
              "aporta el pre-entrenamiento.\n",
              "| encoder | " + " | ".join(cols) + " |\n|---|" + "---|" * len(cols)]
     for nombre, c in corridas.items():
-        texto.append(_fila(nombre, [sondear(c["val"], c["test"], df, n_boot)[x] for x in cols]))
+        r = sondear(c["val"], c["test"], df, n_boot)  # una vez por corrida, no una por columna
+        texto.append(_fila(nombre, [r[x] for x in cols]))
     return "\n".join(texto) + "\n"
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("paso", choices=["semillas", "cortes", "intervenciones", "controles", "extras"])
+    ap.add_argument("paso", choices=["semillas", "cortes", "intervenciones", "controles", "extras", "techo"])
     ap.add_argument("--entrada7", default=str(ENTRADA7))
     ap.add_argument("--entrada9", default=str(ENTRADA9))
     ap.add_argument("--k", type=int, default=8, help="número de tipos")
@@ -363,7 +426,7 @@ def main(argv=None) -> None:
     SALIDA.mkdir(parents=True, exist_ok=True)
     texto = {"semillas": lambda: seccion_semillas(e7, e9, args.k, args.n_boot), "cortes": lambda: seccion_cortes(e7, e9, args.k),
              "intervenciones": lambda: seccion_intervenciones(e7, e9, args.k), "controles": lambda: seccion_controles(e7, e9, args.n_boot),
-             "extras": lambda: seccion_extras(e7, e9, args.n_boot)}[args.paso]()
+             "extras": lambda: seccion_extras(e7, e9, args.n_boot), "techo": lambda: seccion_techo(e7, e9, args.k)}[args.paso]()
     destino = SALIDA / f"resultados_{args.paso}.md"
     destino.write_text(f"# Fase 9, etapa B: {args.paso} (generado por `analisis.etapa_b`)\n\n" + texto)
     print(f"escrito {destino}")

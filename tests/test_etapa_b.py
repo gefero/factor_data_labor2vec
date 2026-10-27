@@ -100,7 +100,8 @@ def mundo(tmp_path_factory):
     # cortes del pre: sólo test
     for corte in (179, 203, 227):
         v = sal["pre"]["test"]
-        guardar(e9, f"pre_f{corte}", {"test": {"id": v["id"], "vec": (v["vec"] + 0.5 * rng.normal(size=v["vec"].shape)).astype(np.float32)}},
+        k = slice(None) if corte != 179 else slice(None, 600)  # en un corte temprano faltan las personas sin eventos todavía
+        guardar(e9, f"pre_f{corte}", {"test": {"id": v["id"][k][::-1], "vec": (v["vec"][k][::-1] + 0.5 * rng.normal(size=v["vec"][k].shape)).astype(np.float32)}},
                 splits=("test",))
     # intervenciones: se cambian exactamente las primeras 100 personas
     for fam in ("t1", "t3", "pre"):
@@ -129,6 +130,7 @@ def test_seccion_semillas(mundo, sondas_falsas):
 def test_seccion_cortes(mundo):
     t = eb.seccion_cortes(mundo["e7"], mundo["e9"], k=4)
     assert "### Corte 2010-12" in t and "### Corte 2014-12" in t and "Transición entre tipos" in t and "Permanencia" in t
+    assert "2010-12: 600" in t  # sólo las personas presentes en el corte
 
 
 def test_seccion_cortes_sin_datos_lo_dice(tmp_path):
@@ -150,3 +152,33 @@ def test_seccion_intervenciones_cuenta_las_afectadas(mundo):
 def test_secciones_de_controles_y_extras(mundo, sondas_falsas):
     assert "Sin datos" in eb.seccion_controles(mundo["e7"], mundo["e9"])
     assert "Sin datos" in eb.seccion_extras(mundo["e7"], mundo["e9"])
+
+
+def test_controles_y_extras_sondean_una_vez_por_corrida(mundo, monkeypatch):
+    """Antes se llamaba a `sondear` una vez por columna de la tabla (13 veces el mismo trabajo)."""
+    import shutil
+
+    claves, llamadas = eb.CLAVE_CAT + eb.CLAVE_CONT, []
+    monkeypatch.setattr(eb, "sondear", lambda val, test, df, n_boot=30: llamadas.append(1) or {c: 0.5 for c in claves})
+    for destino, origen in (("pre_ctrl_tiempo", "pre_s1"), ("pre_ctrl_orden", "pre_s2"), ("pre_sinuv", "pre_s1"), ("pre_azar", "pre_s2")):
+        shutil.copytree(mundo["e9"] / origen, mundo["e9"] / destino, dirs_exist_ok=True)
+    assert "| fechas permutadas |" in eb.seccion_controles(mundo["e7"], mundo["e9"])
+    assert len(llamadas) == 3  # pre, fechas permutadas, orden permutado
+    llamadas.clear()
+    assert "| pesos sin entrenar |" in eb.seccion_extras(mundo["e7"], mundo["e9"])
+    assert len(llamadas) == 3
+
+
+def test_tipologia_con_muestra_recupera_grupos_y_asigna_a_todos():
+    from sklearn.metrics import adjusted_rand_score
+
+    rng = np.random.default_rng(0)
+    x = np.concatenate([rng.normal(size=(60, 5)) + 8 * np.eye(5)[j] for j in range(3)])  # tres direcciones distintas
+    verdad = np.repeat([0, 1, 2], 60)
+    perm = rng.permutation(len(x))
+    a, b = np.sort(perm[:90]), np.sort(perm[90:])
+    ta, tb = eb.tipologia_con_muestra(x, a, 3), eb.tipologia_con_muestra(x, b, 3)
+    assert len(ta) == len(x) == len(tb)  # asigna a todas, no sólo a la muestra
+    assert adjusted_rand_score(verdad, ta) > 0.9 and adjusted_rand_score(ta, tb) > 0.9
+    ruido = rng.normal(size=(180, 5))  # sin grupos reales las dos mitades casi no coinciden
+    assert adjusted_rand_score(eb.tipologia_con_muestra(ruido, a, 3), eb.tipologia_con_muestra(ruido, b, 3)) < 0.5
