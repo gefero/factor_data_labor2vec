@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader
 from labor2vec.entrenar import _ruta, cargar_config
 from labor2vec.modelo.clasificador import ClasificadorT1
 from labor2vec.tareas.datos import DataModuleT1, collate
-from labor2vec.tokens.documento import Opciones, opciones_de
+from labor2vec.tokens.documento import INTERVENCIONES, Opciones, opciones_de
 from labor2vec.tokens.vocabulario import N_ESPECIALES
 
 
@@ -146,11 +146,17 @@ def saliency(sonda: Sonda, ds, indices: np.ndarray, op: Opciones, dispositivo, n
     return {k: np.concatenate(v) if k in ("token", "abspos", "puntaje") else np.array(v) for k, v in sal.items()}
 
 
-def cargar_modelo(ruta, cfg: dict, sin_cabeza: bool) -> ClasificadorT1:
+def cargar_modelo(ruta, cfg: dict, sin_cabeza: bool, azar: bool = False) -> ClasificadorT1:
+    """Con `azar` se arma el encoder con los hiperparámetros de `ruta` pero con los pesos iniciales sin entrenar (control de
+    la fase 9: qué aporta el pre-entrenamiento); la semilla es la del config."""
     ck = torch.load(Path(ruta).expanduser(), map_location="cpu", weights_only=False)
+    if azar and not sin_cabeza:
+        raise ValueError("--azar sólo tiene sentido con --sin-cabeza")
     if sin_cabeza:  # encoder pre-entrenado: sus hparams son los del encoder, la cabeza queda sin usar
+        torch.manual_seed(cfg["semilla"])
         m = ClasificadorT1(ck["hparams"])
-        m.cargar_preentrenado(ruta)
+        if not azar:
+            m.cargar_preentrenado(ruta)
     else:
         m = ClasificadorT1(ck["hparams"]["hp_encoder"], ck["hparams"]["ft"])
         m.load_state_dict(ck["state_dict"])
@@ -164,6 +170,10 @@ def main(argv=None) -> None:
     ap.add_argument("--salida", required=True)
     ap.add_argument("--set", action="append", default=[], dest="cambios", metavar="CLAVE=VALOR")
     ap.add_argument("--sin-cabeza", action="store_true", help="encoder pre-entrenado: sin logit, g ni saliency")
+    ap.add_argument("--sin-grad", action="store_true", help="no calcular g ni saliency (más rápido; lote normal en test)")
+    ap.add_argument("--solo-test", action="store_true", help="saltear val (para B2 y B3, que sólo usan test)")
+    ap.add_argument("--azar", action="store_true", help="con --sin-cabeza: encoder con pesos sin entrenar (control)")
+    ap.add_argument("--intervencion", choices=INTERVENCIONES, help="B3: cambia una cosa de cada historia antes de tokenizar")
     ap.add_argument("--n-saliency", type=int, default=2000)
     ap.add_argument("--n-copias", type=int, default=25)
     ap.add_argument("--ruido", type=float, default=0.15, help="σ de SmoothGrad como fracción del rango de los embeddings")
@@ -174,30 +184,33 @@ def main(argv=None) -> None:
 
     cfg = cargar_config(_ruta(args.config), args.cambios)
     d = cfg["datos"]
+    if args.intervencion:
+        d["intervencion"] = args.intervencion
+    con_grad = not (args.sin_cabeza or args.sin_grad)
     op = opciones_de(d)
     dm = DataModuleT1(_ruta(d["corpus"]), None, op, _ruta(d["t1"]), d["etiqueta"], d["tamano_lote"], d["num_workers"],
                       cfg["semilla"])
     dm.setup()
     dispositivo = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    modelo = cargar_modelo(args.modelo, cfg, args.sin_cabeza).to(dispositivo)
+    modelo = cargar_modelo(args.modelo, cfg, args.sin_cabeza, args.azar).to(dispositivo)
     sonda = Sonda(modelo, sigma_ruido(modelo, args.ruido))
     salida = _ruta(args.salida)
     salida.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
 
     out = {}
-    for split in ("val", "test"):
-        if split == "test" and not args.sin_cabeza:
+    for split in (("test",) if args.solo_test else ("val", "test")):
+        if split == "test" and con_grad:
             dm.tamano = args.lote_grad  # los gradientes de todas las capas en fp32 ocupan mucha más memoria que val
         loader = getattr(dm, f"{split}_dataloader")()
         if args.max_personas:
             loader = (b for _, b in zip(range(-(-args.max_personas // dm.tamano)), loader))
-        r = recorrer(sonda, loader, dispositivo, not args.sin_cabeza, con_grad=(split == "test" and not args.sin_cabeza))
+        r = recorrer(sonda, loader, dispositivo, not args.sin_cabeza, con_grad=(split == "test" and con_grad))
         out |= {f"{split}_{k}": v for k, v in r.items()}
         print(f"{split}: {len(r['id'])} personas, {time.time() - t0:.0f} s", flush=True)
     np.savez_compressed(salida / "personas.npz", **out)
 
-    if not args.sin_cabeza and args.n_saliency:
+    if con_grad and args.n_saliency:
         pos = {int(i): k for k, i in enumerate(dm.ds["test"].id)}
         elegidas = muestra_estratificada(out["test_y"], out["test_logit"], args.n_saliency)
         indices = np.array([pos[int(out["test_id"][k])] for k in elegidas])

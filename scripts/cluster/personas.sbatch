@@ -1,9 +1,10 @@
 #!/bin/bash
-# Fase 7: vectores de persona, gradientes (TCAV) y saliency de un modelo ajustado, en una A30 de Mendieta. Uso:
+# Fases 7 y 9: vectores de persona (y, en la fase 7, gradientes para TCAV y saliency) de un modelo, en una A30 de Mendieta. Uso:
 #
 #   sbatch --mail-type=BEGIN,END,FAIL --mail-user=CORREO -J f7_NOMBRE scripts/cluster/personas.sbatch NOMBRE CONFIG MODELO [args de extraer]
 #
-# Ejemplos (los resultados quedan en ~/labor2vec/runs/fase7/NOMBRE/{personas,saliency}.npz):
+# Los resultados quedan en ~/labor2vec/$BASE/NOMBRE/{personas,saliency}.npz, con BASE=runs/fase7 por defecto (fase 9: BASE=runs/fase9;
+# se pasa por el entorno del envío, no con --export). Ejemplos de la fase 7:
 #   ... personas.sbatch t1  configs/ajuste_t1.yaml runs/t1_l2v_lr0001/modelo_final.pt
 #   ... personas.sbatch t3  configs/ajuste_t3.yaml runs/t3_l2v_s0/modelo_final.pt
 #   ... personas.sbatch pre configs/ajuste_t1.yaml runs/pre_150ep/modelo_final.pt --sin-cabeza
@@ -25,7 +26,8 @@ shift 3
 cd "$HOME/labor2vec"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, resultados en runs/fase7/$NOMBRE"
+BASE=${BASE:-runs/fase7}
+echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, resultados en $BASE/$NOMBRE"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 
 echo "== Comprobación de importaciones (si falla, no se gasta el resto)"
@@ -36,5 +38,5 @@ print('importaciones OK; CUDA', torch.cuda.is_available(), torch.cuda.get_device
 "
 
 echo "== Extracción"
-python3 -u -m labor2vec.analisis.extraer --config "$CONFIG" --modelo "$MODELO" --salida "runs/fase7/$NOMBRE" "$@"
+python3 -u -m labor2vec.analisis.extraer --config "$CONFIG" --modelo "$MODELO" --salida "$BASE/$NOMBRE" "$@"
 echo "fin"

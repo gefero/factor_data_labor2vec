@@ -43,6 +43,8 @@ class Opciones:
     # control de la fase 8: None | "tiempo" (se permutan fechas y edades entre los eventos de la persona) | "orden" (se
     # permuta el orden de los eventos en la secuencia, con su fecha). Necesita `rng`; con el de val/test es determinista.
     control_temporal: str | None = None
+    # intervención de la fase 9 (B3), una de `INTERVENCIONES`: cambia una cosa de la historia antes de tokenizar
+    intervencion: str | None = None
     # augmentación (probabilidades por documento, como en el config de light)
     p_remuestreo: float = 0.4
     rango_remuestreo: tuple[float, float] = (0.5, 0.75)  # fracción de eventos que se conserva
@@ -60,10 +62,10 @@ class Opciones:
 
 def opciones_de(d: dict, **extra) -> Opciones:
     """`Opciones` a partir de la sección `datos` de un YAML (max_length, fin_ventana y, si están, eventos_compactos,
-    atributos y control_temporal); `extra` pisa campos sueltos (p. ej. `mask_ratio`)."""
+    atributos, control_temporal e intervencion); `extra` pisa campos sueltos (p. ej. `mask_ratio`)."""
     return Opciones(max_length=d["max_length"], fin_ventana=d["fin_ventana"],
                     eventos_compactos=d.get("eventos_compactos", False), atributos=d.get("atributos", "todos"),
-                    control_temporal=d.get("control_temporal"), **extra)
+                    control_temporal=d.get("control_temporal"), intervencion=d.get("intervencion"), **extra)
 
 
 @dataclass
@@ -143,6 +145,42 @@ def _buscar(lut: np.ndarray, codigos: np.ndarray) -> np.ndarray:
     return np.where(fuera, UNK, lut[np.minimum(idx, len(lut) - 1)])
 
 
+INTERVENCIONES = ("sin_ultimo_anio", "sin_cambios_recientes", "salario_arriba", "salario_abajo", "atrasar_2_anios")
+PUNTOS_SALARIO = 10  # puntos de percentil (un decil) que suben o bajan los salarios del último año
+
+
+def intervenir(ev: Eventos, nombre: str, fin: int) -> Eventos:
+    """Fase 9 (B3): variante de la historia de una persona; `fin` es el último mes de la ventana (239 = 2015-12).
+
+    - `sin_ultimo_anio`: se borran los eventos de los últimos 12 meses.
+    - `sin_cambios_recientes`: la última relación conserva la rama y el tamaño de la anterior (relaciones = eventos desde
+      cada `nueva`; con simultáneas es una aproximación). Si hay una sola relación no cambia nada.
+    - `salario_arriba` / `salario_abajo`: el percentil de los eventos del último año sube o baja un decil (entre 1 y 100;
+      los meses con remuneración 0 no se tocan).
+    - `atrasar_2_anios`: todas las fechas, y con ellas las edades, pasan 24 meses atrás; lo que queda antes del mes 0 se descarta.
+    Devuelve copias: no modifica `ev`, que viene de la memoria del corpus.
+    """
+    if nombre not in INTERVENCIONES:
+        raise ValueError(f"intervencion desconocida: {nombre!r}")
+    if nombre == "sin_ultimo_anio":
+        return ev.tomar(ev.mes_idx <= fin - 12)
+    out = Eventos(*(getattr(ev, f).copy() for f in ev.__dataclass_fields__))
+    if nombre == "atrasar_2_anios":
+        out.mes_idx = (out.mes_idx.astype(np.int32) - 24).astype(ev.mes_idx.dtype)
+        return out.tomar(out.mes_idx >= 0)
+    if nombre in ("salario_arriba", "salario_abajo"):
+        signo = 1 if nombre == "salario_arriba" else -1
+        sel = (out.mes_idx > fin - 12) & (out.pct_rem > 0)
+        nuevo = np.clip(out.pct_rem[sel].astype(np.int32) + signo * PUNTOS_SALARIO, 1, 100)
+        out.pct_rem[sel] = nuevo.astype(out.pct_rem.dtype)
+        return out
+    inicios = np.flatnonzero(out.nueva.astype(bool))
+    if len(inicios) >= 2:
+        k = inicios[-1]
+        out.r34[k:], out.tramo[k:] = out.r34[k - 1], out.tramo[k - 1]
+    return out
+
+
 def edad_en_anios(mes_idx: np.ndarray, fnacim: int) -> np.ndarray:
     anio = 1996 + mes_idx // 12
     mes = mes_idx % 12 + 1
@@ -156,6 +194,9 @@ def construir_documento(ev: Eventos, sexo: int, fnacim: int, vocab: Vocabulario,
     perturbación de orden de la tarea SOP; ambas necesitan `rng`."""
     if op.fin_ventana is not None:
         ev = ev.tomar(ev.mes_idx <= op.fin_ventana)
+    if op.intervencion:
+        fin = op.fin_ventana if op.fin_ventana is not None else (int(ev.mes_idx.max()) if len(ev) else 0)
+        ev = intervenir(ev, op.intervencion, fin)
     dias = dias_de_mes(ev.mes_idx).astype(np.int32)
     edad = edad_en_anios(ev.mes_idx, fnacim)
 
