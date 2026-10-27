@@ -1,0 +1,128 @@
+"""Pruebas de la fase 9: optimal matching, costos TRATE y estados mensuales (plans/PLAN_fase_9.md)."""
+
+import numpy as np
+import polars as pl
+from scipy.spatial.distance import squareform
+
+from labor2vec.analisis import secuencias
+
+
+def om_referencia(a, b, sub, indel):
+    """DP de optimal matching en Python puro, para contrastar con la versión de numba."""
+    d = np.zeros((len(a) + 1, len(b) + 1))
+    d[:, 0] = np.arange(len(a) + 1) * indel
+    d[0, :] = np.arange(len(b) + 1) * indel
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            d[i, j] = min(d[i - 1, j - 1] + sub[a[i - 1], b[j - 1]], d[i - 1, j] + indel, d[i, j - 1] + indel)
+    return d[-1, -1]
+
+
+def test_om_coincide_con_referencia():
+    rng = np.random.default_rng(0)
+    seqs = rng.integers(0, 4, size=(12, 15)).astype(np.uint8)
+    sub = secuencias.costos_trate(seqs, 4)
+    d = squareform(secuencias.distancias_om(seqs, sub, 1.0))
+    for i in range(len(seqs)):
+        for j in range(len(seqs)):
+            assert np.isclose(d[i, j], om_referencia(seqs[i], seqs[j], sub, 1.0), atol=1e-4)
+    assert np.allclose(np.diag(d), 0)
+
+
+def test_om_distancia_cero_entre_iguales_y_simetrica():
+    a = np.array([[1, 1, 2, 3, 0, 0], [1, 1, 2, 3, 0, 0], [3, 3, 3, 0, 0, 1]], dtype=np.uint8)
+    sub = secuencias.costos_trate(a, 4)
+    d = squareform(secuencias.distancias_om(a, sub))
+    assert d[0, 1] == 0 and d[0, 2] > 0 and np.allclose(d, d.T)
+
+
+def test_costos_trate_simetricos_diagonal_cero():
+    rng = np.random.default_rng(1)
+    seqs = rng.integers(0, 5, size=(200, 30)).astype(np.uint8)
+    c = secuencias.costos_trate(seqs, 5)
+    assert np.allclose(c, c.T) and np.allclose(np.diag(c), 0)
+    assert (c >= 0).all() and (c <= 2).all()
+
+
+def test_estados_mensuales(tmp_path):
+    # persona 1: dos relaciones en el mes 3 (gana la de mayor remuneración); persona 2: sin registros en la ventana
+    panel = pl.DataFrame({
+        "id_trabajador": [1, 1, 1, 1], "id_relacion": [10, 10, 11, 10], "mes_idx": [2, 3, 3, 4],
+        "rem_tot": [100.0, 100.0, 500.0, 100.0], "pct_rem_mes": [10.0, 10.0, 90.0, 50.0], "tramo_empleo": [4, 4, 1, 2]})
+    ruta = tmp_path / "panel.parquet"
+    panel.write_parquet(ruta)
+    s = secuencias.estados_mensuales(np.array([1, 2]), fin=5, meses=6, panel=ruta)
+    assert s.shape == (2, 6)
+    # estado = 1 + 3·salario + tamaño: (bajo, chica) = 1; (alto, grande) = 1 + 6 + 2 = 9; (medio, mediana) = 1 + 3 + 1 = 5
+    assert s[0].tolist() == [0, 0, 1, 9, 5, 0]
+    assert (s[1] == 0).all()
+
+
+def test_sonda_continua_recupera_informacion_lineal_y_no_inventa():
+    from labor2vec.analisis import espacio
+
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(3000, 20))
+    y_lineal = x[:, 0] * 2 - x[:, 3] + 0.1 * rng.normal(size=3000)
+    y_ruido = rng.normal(size=3000)
+    r = espacio.sonda_continua(x[:1500], y_lineal[:1500], x[1500:], y_lineal[1500:], n_boot=30)
+    assert r["valor"] > 0.95 and r["lo"] <= r["valor"] <= r["hi"]
+    r0 = espacio.sonda_continua(x[:1500], y_ruido[:1500], x[1500:], y_ruido[1500:], n_boot=30)
+    assert abs(r0["valor"]) < 0.05
+
+
+def test_sonda_categorica_sobre_el_azar_solo_con_informacion():
+    from labor2vec.analisis import espacio
+
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=(4000, 10))
+    y = (x[:, 0] + 0.3 * rng.normal(size=4000) > 0).astype(int) + (x[:, 1] > 1).astype(int)
+    r = espacio.sonda_categorica(x[:2000], y[:2000], x[2000:], y[2000:], n_boot=30)
+    assert r["valor"] > 0.6 > r["azar"] + 0.2
+    y_azar = rng.integers(0, 3, 4000)
+    r0 = espacio.sonda_categorica(x[:2000], y_azar[:2000], x[2000:], y_azar[2000:], n_boot=30)
+    assert abs(r0["valor"] - 1 / 3) < 0.05
+
+
+def test_razon_de_correlacion():
+    from labor2vec.analisis import espacio
+
+    g = np.repeat([0, 1, 2], 100)
+    assert espacio.razon_de_correlacion(g.astype(float), g) == 1.0
+    x = np.random.default_rng(0).normal(size=300)
+    assert espacio.razon_de_correlacion(x, g) < 0.05
+    assert espacio.razon_de_correlacion(x, np.full(300, -1)) == 0.0  # sin grupos válidos
+
+
+def test_sonda_continua_con_variable_constante_da_nan():
+    from labor2vec.analisis import espacio
+
+    x = np.random.default_rng(0).normal(size=(200, 5))
+    r = espacio.sonda_continua(x[:100], np.zeros(100), x[100:], np.zeros(100), n_boot=5)
+    assert np.isnan(r["valor"])
+
+
+def test_submatriz_coincide_con_squareform():
+    from scipy.spatial.distance import pdist
+
+    from labor2vec.analisis import espacio
+
+    x = np.random.default_rng(0).normal(size=(40, 3))
+    d = pdist(x).astype(np.float32)
+    completa = squareform(d)
+    idx = np.array([30, 2, 17, 5, 39])
+    sub = espacio.submatriz(d, 40, idx)
+    esperado = completa[np.ix_(np.sort(idx), np.sort(idx))]
+    assert np.allclose(sub, esperado, atol=1e-6) and np.allclose(np.diag(sub), 0)
+
+
+def test_cortar_y_normalizar():
+    from scipy.cluster.hierarchy import linkage
+
+    from labor2vec.analisis import espacio
+
+    rng = np.random.default_rng(0)
+    x = np.concatenate([rng.normal(size=(30, 4)) + 8, rng.normal(size=(30, 4)) - 8])
+    lab = espacio.cortar(linkage(x, "ward"), 2)
+    assert set(lab) == {0, 1} and len(set(lab[:30])) == 1 and len(set(lab[30:])) == 1 and lab[0] != lab[30]
+    assert np.allclose(np.linalg.norm(espacio._normalizar(x), axis=1), 1)
