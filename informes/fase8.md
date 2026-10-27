@@ -71,7 +71,7 @@ Pérdida de la métrica principal al sacar esos atributos (con todos − sin úl
 | Transformer sin pre-entrenar | 0,024 * | −0,073 * (ver abajo) | 0,049 * | 0,013 * |
 
 Resultados sin esos atributos (test; transformer pre-entrenado, mejor método simple):
-- **T1:** AUL 0,602 contra 0,585 (GRU) y 0,582 (logística). Sin ellos el transformer pasa a quedar levemente arriba (antes empataba).
+- **T1:** AUL 0,606 contra 0,585 (GRU y logística). Sin ellos el transformer pasa a quedar levemente arriba (antes empataba).
 - **T2:** QWK 0,822; empata con el GRU (0,822), el sin pre-entrenar (0,818), la logística con estado actual y la persistencia (0,822 las dos).
 - **T3:** AUL 0,661 contra 0,656 de la logística con estado actual y 0,624 de la FFNN y la logística. El transformer cae 0,064 y sigue arriba de la FFNN, la logística y el GRU (0,597); la logística con estado actual queda cerca (0,656, IC que se superponen).
 - **T4:** AUC macro 0,749 contra 0,699 (GRU) y 0,684 (logística con estado actual). La ventaja se mantiene e incluso crece.

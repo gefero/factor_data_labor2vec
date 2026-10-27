@@ -14,7 +14,7 @@ Actualizado el 2026-10-22, **con los resultados de la fase 8** (controles tempor
   - Años de nacimiento ordenados a nivel local.
   - Ramas vecinas comparten sector (0,41 contra 0,22) y provincias vecinas comparten región (0,49 contra 0,15).
   - Distancias reproducibles entre semillas (Spearman 0,72), mucho más en salarios y años (0,74-0,86) que en ramas finas (0,37-0,40).
-- **Pre-entrenar ayuda en T1, T3 y T4** (frente al mismo transformer sin pre-entrenar, no frente a métodos simples): de +0,06 a +0,09 sobre el mismo transformer sin pre-entrenar, también sin los atributos de último valor (T3 0,661 contra 0,589; T4 0,749 contra 0,673; T1 0,602 contra 0,547).
+- **Pre-entrenar ayuda en T1, T3 y T4** (frente al mismo transformer sin pre-entrenar, no frente a métodos simples): de +0,06 a +0,09 sobre el mismo transformer sin pre-entrenar, también sin los atributos de último valor (T3 0,661 contra 0,589; T4 0,749 contra 0,673; T1 0,606 contra 0,539).
 - **La ventaja sobre modelos simples depende de la tarea y de qué se le da al modelo simple.**
   - Contra métodos que solo ven proporciones de tokens: T1 y T2 empate (T1 0,619 contra 0,617; T2 QWK 0,830 contra 0,822 de repetir el quintil de 2015); T3 gana (AUL 0,725 contra 0,702 GRU y 0,687 FFNN); T4 gana (AUC macro 0,772 contra 0,746 GRU y 0,691 logística). Sin los atributos de último valor la ventaja de T3 y T4 sigue (T3 0,661 contra 0,624; T4 0,749 contra 0,699).
   - **Contra métodos simples con variables de tiempo resumidas** (fase 8b): T1 pierde (0,619 contra 0,634); T3 empata (0,725 contra 0,731); T2 sin cambios; **T4 gana pero más chico** (0,772 contra 0,741, y 0,749 contra 0,738 sin último valor). Es el resultado a reportar.
