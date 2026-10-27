@@ -2,7 +2,7 @@
 
 ## Línea de base con conteos absolutos
 
-R² en test (ridge entrenada en val) de las variables continuas. Si los conteos absolutos igualan al vector `pre`, su ventaja sobre las proporciones era información de cantidad (largo de la historia, empleadores distintos) y no de secuencia.
+R² en test (ridge entrenada en val) de las variables continuas. Si los conteos absolutos igualan al vector `pre`, su ventaja sobre las proporciones era información de cantidad (largo de la historia, empleadores distintos) y no de secuencia. Las filas «por año» dan los meses con registro, inicios de relación y cambios de tamaño y de rama de cada año calendario: son casi las mismas cantidades que las variables de dinámica (cambios a 60 meses = suma de los últimos años), así que ahí el resultado es un techo para una línea de base de conteos, no una comparación independiente.
 
 | espacio | edad (años) | salario (percentil 2015) | antigüedad (años) | dinámica: antiguedad | dinámica: meses_desde_cambio_empresa | dinámica: meses_desde_cambio_tamano | dinámica: meses_desde_cambio_rama | dinámica: cambios_empresa_12 | dinámica: cambios_empresa_24 | dinámica: cambios_empresa_60 | dinámica: cambios_tamano_12 | dinámica: cambios_tamano_24 | dinámica: cambios_tamano_60 | dinámica: cambios_rama_12 | dinámica: cambios_rama_24 | dinámica: cambios_rama_60 | dinámica: huecos_24 | dinámica: huecos_60 | dinámica: meses_desde_ultimo_registro | dinámica: dif_salario_12 | dinámica: dif_salario_36 | dinámica: hay_dif_12 | dinámica: hay_dif_36 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -12,3 +12,5 @@ R² en test (ridge entrenada en val) de las variables continuas. Si los conteos 
 | conteos absolutos | 0.387 | 0.618 | 0.690 | 0.424 | 0.316 | 0.350 | 0.342 | 0.065 | 0.119 | 0.225 | 0.011 | 0.021 | 0.036 | 0.046 | 0.084 | 0.160 | 0.057 | 0.167 | nan | 0.005 | 0.013 | 0.004 | 0.137 |
 | log(1 + conteos) | 0.333 | 0.704 | 0.678 | 0.505 | 0.397 | 0.437 | 0.434 | 0.109 | 0.223 | 0.440 | 0.029 | 0.057 | 0.116 | 0.081 | 0.189 | 0.420 | 0.077 | 0.231 | nan | 0.007 | 0.017 | 0.007 | 0.204 |
 | log(1 + conteos) + tamaño | 0.397 | 0.718 | 0.727 | 0.644 | 0.498 | 0.548 | 0.537 | 0.112 | 0.249 | 0.484 | 0.029 | 0.057 | 0.117 | 0.084 | 0.207 | 0.451 | 0.116 | 0.294 | nan | 0.010 | 0.022 | 0.036 | 0.466 |
+| meses y cambios por año (80 columnas) | 0.451 | 0.192 | 0.777 | 0.568 | 0.661 | 0.574 | 0.570 | 0.906 | 0.874 | 0.785 | 1.000 | 0.989 | 0.968 | 0.722 | 0.646 | 0.612 | 0.721 | 0.541 | nan | 0.027 | 0.033 | 0.054 | 0.396 |
+| log(1 + conteos) + tamaño + por año | 0.499 | 0.730 | 0.832 | 0.719 | 0.730 | 0.701 | 0.662 | 0.913 | 0.892 | 0.857 | 1.000 | 0.989 | 0.968 | 0.740 | 0.676 | 0.729 | 0.778 | 0.703 | nan | 0.031 | 0.043 | 0.079 | 0.564 |

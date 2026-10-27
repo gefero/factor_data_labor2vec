@@ -141,7 +141,7 @@ Cifras en test. Entre corchetes, el IC al 95 % por bootstrap, cuando se cita una
 
 ### 5.1 Una corrección sobre los datos
 
-La columna «meses desde el último registro» muestra $R^2=1{,}000$ en todos los espacios en `resultados_sondas.md`. **Es un artefacto:** la variable es constante en test, así que el denominador de $R^2$ es casi cero y mi fórmula devolvía 1. Ya está corregido en el código (devuelve NaN si la variable no varía) y hay una prueba que lo cubre, pero las tablas guardadas fueron generadas antes de la corrección. Hay que ignorar esa columna; se arregla la próxima vez que se regeneren las sondas. No afecta a ninguna otra cifra.
+La columna «meses desde el último registro» mostraba $R^2=1{,}000$ en todos los espacios. Era un artefacto: la variable es constante en test, el denominador de $R^2$ es casi cero y mi fórmula devolvía 1. Se corrigió en el código (devuelve NaN si la variable no varía, con una prueba) y **las sondas se regeneraron el 2026-10-27**: la columna ahora da `nan` en los 12 espacios y las otras 336 celdas de la tabla son idénticas a las de antes.
 
 La edad con tokens ($R^2=1{,}000$) y el sexo con tokens (exactitud 0,999) sí son correctos pero **triviales**: sexo y edad entran directamente como columnas de la representación de tokens, así que ahí la sonda sólo recupera una entrada. No se usan para comparar.
 
@@ -343,8 +343,24 @@ Las proporciones de tokens dividen por el total de tokens de la persona, así qu
 **Lectura.**
 
 1. **Una parte grande de la ventaja del vector era información de cantidad.** Con log(1+conteos) más el tamaño de la historia, los meses desde el último cambio (de empresa, tamaño y rama) y la antigüedad en el empleo actual igualan o superan al vector, y cambios de empresa y de rama a 60 meses quedan cerca (0,48 contra 0,55; 0,45 contra 0,50). La comparación contra las proporciones solas (secciones 5.3 y 7.2) sobreestimaba la ventaja.
-2. **Lo que sigue por encima del conteo.** Los huecos (0,49 contra 0,29 a 60 meses; 0,28 contra 0,12 a 24 meses), los cambios en ventanas cortas (empresa a 12 meses 0,20 contra 0,11; tamaño a 60 meses 0,24 contra 0,12) y, sobre todo, la existencia de un cambio salarial reciente (0,43 contra 0,04 a 12 meses; 0,61 contra 0,47 a 36). Estas variables comparan momentos distintos de la historia (hubo un hueco, el salario cambió en el último año), cosa que un conteo de tokens no puede representar. Es la mejor evidencia que tenemos de que el vector guarda algo más que cantidades.
-3. **Reservas.** (a) La línea de base tiene unas mil columnas y el vector bastante menos, lo que favorece a los conteos; la ventaja que queda es, en ese sentido, conservadora. (b) No se probó una línea de base con interacciones (por ejemplo, conteos por año), que podría achicar la brecha en huecos y salario. (c) Los controles de 7.3 muestran que esa ventaja restante tampoco necesita fechas exactas ni orden, así que no se debe leer como «el modelo usa la secuencia».
+2. **Lo que quedaba por encima del conteo total** (primera versión de esta tabla): huecos (0,49 contra 0,29 a 60 meses), cambios en ventanas cortas y la existencia de un cambio salarial reciente (0,43 contra 0,04 a 12 meses). Con la línea de base por año (punto 3) casi todo eso se cierra.
+3. **Conteos por año (la referencia más fuerte).** Se agregaron 80 columnas con, para cada año calendario de 1996 a 2015, los meses con registro, los inicios de relación y los cambios de tamaño y de rama (`tiempo.por_anio`, el mismo criterio que las variables de dinámica). Sola y combinada con los conteos logarítmicos y el tamaño (`resultados_conteos.md`):
+
+| variable | `pre` | por año | por año + conteos + tamaño |
+|---|---|---|---|
+| cambios de empresa 12 m | 0,195 | 0,906 | 0,913 |
+| cambios de empresa 60 m | 0,548 | 0,785 | 0,857 |
+| cambios de tamaño 12 m | 0,115 | 1,000 | 1,000 |
+| cambios de rama 60 m | 0,495 | 0,612 | 0,729 |
+| huecos 24 m | 0,284 | 0,721 | 0,778 |
+| huecos 60 m | 0,492 | 0,541 | 0,703 |
+| ¿hay dif. salarial 12 m? | 0,428 | 0,054 | 0,079 |
+| ¿hay dif. salarial 36 m? | 0,613 | 0,396 | 0,564 |
+| diferencia salarial 36 m | 0,039 | 0,033 | 0,043 |
+
+   Esta referencia **supera ampliamente al vector** en todo lo que son conteos de cambios y de huecos (el R² de 1,000 en cambios de tamaño a 12 meses es una identidad: la variable es la suma de esa columna). Por construcción es casi circular con las variables de dinámica, así que sirve como techo de una línea de base de conteos y no como comparación independiente. Lo que muestra es que **los huecos y los cambios en ventanas cortas eran información de cantidad por año**, que los conteos totales no alcanzan a dar pero que no requiere nada propio de un modelo de secuencias.
+4. **Lo único que sigue a favor del vector** es si había un salario registrado exactamente 12 o 36 meses antes del corte (`hay_dif_12`: 0,43 contra 0,05 a 0,08; `hay_dif_36`: 0,61 contra 0,40 a 0,56). Esas variables dependen de si hay registro en un mes preciso, algo que un conteo por año no ubica. Es información de *posición temporal fina* dentro de la historia, y es la única candidata a «dinámica» que no cierran los conteos. Ninguna línea de base midió la evolución del salario (la diferencia de percentil queda en 0,01 a 0,12 en todos los espacios).
+5. **Reservas.** (a) La línea de base tiene unas mil columnas (o 80 las de por año) y el vector bastante menos, lo que favorece a los conteos; la ventaja que queda del vector es, en ese sentido, conservadora. (b) Los controles de 7.3 muestran que ni siquiera esa ventaja restante necesita fechas ni orden, lo que es difícil de reconciliar con que dependa de la posición temporal fina: no está resuelto y conviene sondear `hay_dif_*` con otro control (por ejemplo, un modelo entrenado sin información de tiempo).
 
 ### 7.5 Trayectorias en el espacio (B2)
 
@@ -402,7 +418,7 @@ El plan era armar tipologías de trayectorias en tres espacios (el vector `pre`,
 1. **Las sondas del espacio pre-entrenado son estables.** Dan lo mismo en tres entrenamientos (rangos de 0,00 a 0,07), por lo que los resultados de lectura del vector no son accidentes de una semilla.
 2. **El vector conserva lo que sabe un conteo de tokens** (rama, tamaño, salario, edad) y **la antigüedad en años mucho mejor** (0,906 contra 0,506 con proporciones; con conteos más tamaño de la historia la brecha casi se cierra: 0,73 contra 0,91 para años, 0,64 contra 0,57 para la antigüedad en el empleo actual).
 3. **La ventaja en dinámica sobre las proporciones era, en su mayor parte, información de cantidad.** Una referencia que conserve los conteos y el largo de la historia iguala o supera al vector en los meses desde el último cambio y en la antigüedad en el empleo actual, y se acerca en los cambios a 60 meses.
-4. **Hay un resto genuino:** huecos, cambios en ventanas cortas y, sobre todo, la existencia de cambios salariales recientes (0,43 contra 0,04) se leen del vector y no de los conteos.
+4. **Lo que queda de ventaja del vector es poco:** sólo saber si había registro en un mes preciso (`hay_dif_12` y `hay_dif_36`). Huecos, cambios en ventanas cortas y cambios de rama se igualan o superan con conteos por año (7.4).
 5. **El origen es el pre-entrenamiento**: un encoder sin entrenar lee lo estático pero no la dinámica; y no depende de rama, provincia ni antigüedad de la empresa.
 6. **Ni las fechas ni el orden** son necesarios para leer esas variables del vector (los controles de 7.3).
 7. **Los ajustes finos reorientan el espacio:** T3 refuerza los cambios; T1, el nivel; ambos pierden direcciones que no necesitan (sección 5.3, puntos 4 y 5).
@@ -411,7 +427,7 @@ El plan era armar tipologías de trayectorias en tres espacios (el vector `pre`,
 **No se puede concluir, y por qué:**
 
 1. **Que el modelo use el orden de los eventos para estas variables.** Los controles dicen que no lo necesita para leerlas; queda sin probar si lo usa para predecir (T1 a T4) más allá de lo que aportan los conteos.
-2. **Que el vector guarde «dinámica» en sentido fuerte.** Sólo el resto de 7.4 (huecos, cambio salarial reciente) apunta en esa dirección, y falta una referencia con conteos por año para saber si es genuino.
+2. **Que el vector guarde «dinámica» en sentido fuerte.** La referencia por año iguala o supera al vector en todos los conteos de cambios y de huecos. Sólo `hay_dif_12` y `hay_dif_36` quedan a favor del vector (7.4), y los controles de 7.3 contradicen que dependan de la posición temporal.
 3. **Que existan tipologías estables de trayectorias en el espacio del modelo.** Con ARI de 0,12 a 0,22 entre semillas, frente a 0,45 de ruido por muestreo del propio `pre` (7.1b), y silueta de 0,03 a 0,05, no.
 4. **Que el modelo no represente la evolución del salario.** Sólo que no se lee linealmente de un promedio, y que la sonda implícita responde con un cuarto del cambio aplicado (7.6).
 5. **Que las comparaciones con el método clásico favorezcan o desfavorezcan al transformer:** la parte A3 no se hizo.
@@ -421,7 +437,7 @@ El plan era armar tipologías de trayectorias en tres espacios (el vector `pre`,
 - **La referencia de las sondas importa más de lo que parecía.** La primera versión del informe usaba proporciones y concluía que el vector tenía información temporal; con conteos más tamaño de la historia, la mayoría de esa ventaja desaparece. Cualquier comparación futura debe usar la referencia más fuerte (7.4), no la más simple.
 - **Comparaciones múltiples.** Son unos 25 objetivos por 12 espacios, con intervalos marginales. Las diferencias citadas son de decenas de puntos y con intervalos que no se tocan; los pares con una diferencia de uno o dos puntos no deben leerse como superioridad.
 - **Las cohortes de T1 y T3 no son las mismas** (T3 es un subconjunto: quienes siguen en 2019). Las comparaciones contra `tokens` son siempre sobre la misma cohorte.
-- **Las tablas de sondas de la etapa A guardadas** (`resultados_sondas.md`) tienen la columna «meses desde el último registro» con $R^2$ = 1,000: es un artefacto (la variable es constante) corregido en el código y todavía no regenerado. Las tablas de la etapa B y de conteos muestran `nan` y están bien.
+- **Las sondas de la etapa A** se regeneraron para sacar el artefacto de «meses desde el último registro» (5.1); no cambió ninguna otra cifra.
 
 ---
 
@@ -430,9 +446,9 @@ El plan era armar tipologías de trayectorias en tres espacios (el vector `pre`,
 Prioridad según lo aprendido:
 
 1. ~~Medir el techo de ruido de las tipologías de proporciones de tokens~~ (hecho, sección 7.1b). Queda probar si promediar semillas estabiliza los tipos.
-2. **Línea de base con conteos por año** (como el paper original) para saber si el resto de 7.4 (huecos, cambio salarial) es genuino.
+2. ~~Línea de base con conteos por año~~ (hecho, 7.4). Queda explicar por qué `hay_dif_*` se leen del vector sin fechas ni orden.
 3. **Decidir sobre el MCSA** (sección 8) a la luz de 7.1. Si se retoma, hay cuatro decisiones pendientes en `plans/PLAN_fase_9.md`.
-4. **Regenerar las sondas de la etapa A** para sacar el artefacto (unos 30 minutos) y agregar una sonda no lineal para la evolución del salario.
+4. ~~Regenerar las sondas de la etapa A~~ (hecho). Queda agregar una sonda no lineal para la evolución del salario.
 5. **Repetir B2 con tipos estables** para que la movilidad entre tipos sea utilizable.
 
-Pendiente de orden: los resultados de la etapa B, la línea de base de conteos y sus correcciones (`etapa_b.py`, `espacio.py`, los `resultados_*.md` y dos figuras sin usar, `index_pre_k8.png` e `index_tokens_k8.png`) están **sin commitear**; falta además una prueba para `conteos`/`seccion_conteos`.
+Los dos gráficos `index_pre_k8.png` e `index_tokens_k8.png` (de la tabla de optimal matching descartada) se borraron. Las cachés de Ward de la etapa A (`data/processed/tareas/ward_*_test_v239.npy`, 0,6 MB cada una) se conservan: son de las tipologías de `pre` y de tokens y se reusan si se retoma el MCSA.

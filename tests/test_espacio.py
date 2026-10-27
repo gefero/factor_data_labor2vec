@@ -128,7 +128,7 @@ def test_cortar_y_normalizar():
     assert np.allclose(np.linalg.norm(espacio._normalizar(x), axis=1), 1)
 
 
-def test_conteos_lee_la_cache_y_seccion_conteos_compara_seis_espacios(tmp_path, monkeypatch):
+def test_conteos_lee_la_cache_y_seccion_conteos_compara_ocho_espacios(tmp_path, monkeypatch):
     from labor2vec.analisis import espacio
 
     ids = np.arange(100)
@@ -141,6 +141,8 @@ def test_conteos_lee_la_cache_y_seccion_conteos_compara_seis_espacios(tmp_path, 
     np.savez(tmp_path / f"conteo_tokens_test_v{espacio.FIN_VENTANA}.npz", id=ids, c=c)
     prop = c / np.maximum(c.sum(1, keepdims=True), 1)
     y = np.log1p(c.sum(1))  # una variable que sólo los conteos (no las proporciones) pueden dar
+    anual = np.random.default_rng(1).normal(size=(100, 8)).astype(np.float32)
+    monkeypatch.setattr(espacio, "por_anio", lambda s: (ids, anual))
     monkeypatch.setattr(espacio, "proporciones", lambda s: (ids, prop))
     monkeypatch.setattr(espacio, "espacios_de", lambda e: {"pre": {s: (ids, prop[:, :2]) for s in ("val", "test")}})
     monkeypatch.setattr(espacio, "objetivos", lambda df, i, s: ({}, {"dinámica: largo": y}))
@@ -149,6 +151,35 @@ def test_conteos_lee_la_cache_y_seccion_conteos_compara_seis_espacios(tmp_path, 
     texto = espacio.seccion_conteos(tmp_path, n_boot=5)
     filas = {f.split("|")[1].strip(): float(f.split("|")[2]) for f in texto.splitlines() if f.startswith("| ") and "---" not in f
              and not f.startswith("| espacio")}
-    assert len(filas) == 6
+    assert len(filas) == 8
     assert filas["conteos absolutos"] > 0.99 or filas["log(1 + conteos) + tamaño"] > 0.99  # el largo se lee de los conteos
     assert filas["proporciones"] < 0.5  # y no de las proporciones
+
+
+def test_por_anio_cuenta_meses_inicios_y_cambios_por_ano_calendario():
+    from labor2vec.tareas import tiempo
+
+    # relación 1: meses 10 a 25 (1996-11 a 1998-02); relación 2: de 30 a 40, con rama distinta; tamaño de la 2 cambia en el 36
+    mes = np.array(list(range(10, 26)) + list(range(30, 41)))
+    rel = np.array([1] * 16 + [2] * 11)
+    nueva = np.array([True] + [False] * 15 + [True] + [False] * 10)
+    rama = np.array([5] * 16 + [7] * 11)
+    tramo = np.array([2] * 16 + [2] * 6 + [3] * 5)
+    x = tiempo.por_anio(mes, np.ones(len(mes)), tramo, rama, rel, nueva).reshape(4, tiempo.ANIOS)
+    esperado_meses = np.bincount(mes // 12, minlength=tiempo.ANIOS)
+    assert x[0].tolist() == esperado_meses.tolist()
+    assert x[1].sum() == 1 and x[1, 30 // 12] == 1  # sólo el inicio de la relación 2 (el de la 1 es el primer mes)
+    assert x[2].sum() == 1 and x[2, 36 // 12] == 1  # un cambio de tamaño en el mes 36
+    assert x[3].sum() == 1 and x[3, 30 // 12] == 1  # un cambio de rama al empezar la relación 2
+    assert (tiempo.por_anio(mes[:0], mes[:0], mes[:0], mes[:0], mes[:0], mes[:0].astype(bool)) == 0).all()
+
+
+def test_por_anio_ignora_eventos_posteriores_al_corte_en_todos_los_arreglos():
+    from labor2vec.tareas import tiempo
+
+    mes = np.array([5, 6, 7, 230, 235, 238, 241, 245, 250])  # los tres últimos pasan el corte (239) y están en 2015+
+    rem = np.arange(1, 10, dtype=float)
+    rel = np.array([1, 1, 1, 2, 2, 2, 2, 2, 2])
+    nueva = np.array([True, False, False, True, False, False, False, False, False])
+    x = tiempo.por_anio(mes, rem, np.full(9, 2), np.full(9, 5), rel, nueva, 239)  # no debe fallar
+    assert x.reshape(4, tiempo.ANIOS)[0].sum() == 6  # sólo los meses hasta el corte

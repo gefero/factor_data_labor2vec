@@ -114,8 +114,37 @@ def variables(mes, rem, tramo, rama, rel, nueva, fin_ventana: int = 239) -> np.n
     return out
 
 
-def calcular(directorio, ids: np.ndarray | None = None, fin_ventana: int = 239) -> tuple[np.ndarray, np.ndarray]:
-    """(id_trabajador, matriz (n, len(NOMBRES))) de todos los trabajadores del corpus en `directorio` (o sólo `ids`)."""
+ANIOS = 20  # 1996 a 2015: los años del panel hasta `mes_idx` 239
+POR_ANIO = ("meses_con_registro", "inicios_de_relacion", "cambios_de_tamano", "cambios_de_rama")
+
+
+def por_anio(mes, rem, tramo, rama, rel, nueva, fin_ventana: int = 239) -> np.ndarray:
+    """Conteos por año calendario (1996 a 2015) de un trabajador, como vector de `len(POR_ANIO) * ANIOS`: meses con registro,
+    inicios de relación (sin el de su primer mes), cambios de tamaño de la relación principal y cambios de rama. Mismas
+    definiciones que `variables`; `rem` sólo sirve para elegir la relación principal."""
+    sel = mes <= fin_ventana
+    mes, rem, tramo, rama, rel, nueva = (a[sel] for a in (mes, rem, tramo, rama, rel, nueva))
+    out = np.zeros((len(POR_ANIO), ANIOS))
+    if len(mes) == 0:
+        return out.ravel()
+    anio = lambda m: np.minimum(np.asarray(m, dtype=np.int64) // 12, ANIOS - 1)  # noqa: E731
+    np.add.at(out[0], anio(np.unique(mes)), 1)
+    primero = int(mes.min())
+    np.add.at(out[1], anio(np.unique(mes[nueva & (mes > primero)])), 1)
+    p = rel == _relacion_principal(mes, rem, rel)
+    um, t_mes = _max_por_mes(mes[p], tramo[p])
+    np.add.at(out[2], anio(um[1:][np.diff(t_mes) != 0]), 1)
+    mes_ini, rama_ini = mes[nueva], rama[nueva]
+    if len(mes_ini) > 1:
+        np.add.at(out[3], anio(mes_ini[1:][np.diff(rama_ini) != 0]), 1)
+    return out.ravel()
+
+
+def calcular(directorio, ids: np.ndarray | None = None, fin_ventana: int = 239, funcion=None,
+             ancho: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """(id_trabajador, matriz (n, len(NOMBRES))) de todos los trabajadores del corpus en `directorio` (o sólo `ids`). Con
+    `funcion` (misma firma que `variables`) y `ancho`, calcula esa en lugar de las 20 variables."""
+    funcion, ancho = funcion or variables, ancho or len(NOMBRES)
     archivos = sorted(Path(directorio).glob("*.parquet"))
     tabla = pq.ParquetDataset(archivos).read(columns=COLUMNAS).combine_chunks()
     ident = tabla["id_trabajador"].to_numpy()
@@ -128,10 +157,10 @@ def calcular(directorio, ids: np.ndarray | None = None, fin_ventana: int = 239) 
         if quiero is not None and int(ident[i]) not in quiero:
             continue
         a, b = off[i], off[i + 1]
-        filas.append(variables(col["mes_idx"][a:b], col["pct_rem"][a:b], col["tramo"][a:b], col["r34"][a:b],
+        filas.append(funcion(col["mes_idx"][a:b], col["pct_rem"][a:b], col["tramo"][a:b], col["r34"][a:b],
                                col["id_relacion"][a:b], col["nueva"][a:b], fin_ventana))
         vistos.append(int(ident[i]))
-    return np.array(vistos, dtype=np.int64), np.array(filas).reshape(len(filas), len(NOMBRES))
+    return np.array(vistos, dtype=np.int64), np.array(filas).reshape(len(filas), ancho)
 
 
 def transformar(x: np.ndarray, media: np.ndarray | None = None, desvio: np.ndarray | None = None):

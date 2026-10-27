@@ -69,6 +69,21 @@ def conteos(split: str, corpus=CORPUS, ruta_t1=T1) -> tuple[np.ndarray, np.ndarr
     return ds.id, c
 
 
+def por_anio(split: str, corpus=CORPUS, ruta_t1=T1) -> tuple[np.ndarray, np.ndarray]:
+    """(id, x) con los conteos por año de `tiempo.por_anio` (80 columnas) de la cohorte de T1 del split, con caché."""
+    import pyarrow.parquet as pq
+
+    cache = TAREAS / f"por_anio_{split}_v{FIN_VENTANA}.npz"
+    if cache.exists():
+        z = np.load(cache)
+        return z["id"], z["x"]
+    cohorte = pq.read_table(ruta_t1, columns=["id_trabajador"])["id_trabajador"].to_numpy()
+    ids, x = tiempo.calcular(Path(corpus) / f"eventos_{split}", cohorte, FIN_VENTANA, tiempo.por_anio,
+                             len(tiempo.POR_ANIO) * tiempo.ANIOS)
+    np.savez(cache, id=ids, x=x.astype(np.float32))
+    return ids, x.astype(np.float32)
+
+
 def por_ids(ids_todos: np.ndarray, x: np.ndarray, ids: np.ndarray) -> np.ndarray:
     """Filas de `x` (indexada por `ids_todos`) en el orden de `ids`."""
     pos = {int(i): k for k, i in enumerate(ids_todos)}
@@ -219,22 +234,26 @@ def seccion_sondas(entrada: Path, n_boot: int) -> str:
 def seccion_conteos(entrada: Path, n_boot: int) -> str:
     """¿La ventaja del vector sobre las proporciones en las variables de dinámica es sólo información de cantidad?
     Compara, sobre las variables continuas, el vector `pre` con proporciones, proporciones + tamaño de la historia,
-    conteos absolutos y log(1 + conteos)."""
+    conteos absolutos, log(1 + conteos) y conteos por año de meses con registro y de cambios (`tiempo.por_anio`)."""
     df = pl.read_parquet(personas.CONCEPTOS)
     prop = {s: proporciones(s) for s in ("val", "test")}
     cont = {s: conteos(s) for s in ("val", "test")}
+    anual = {s: por_anio(s) for s in ("val", "test")}
     pre = espacios_de(entrada)["pre"]
 
     def extra(c):  # tamaño de la historia: eventos totales (log) y tokens distintos
         return np.stack([np.log1p(c.sum(1)), (c > 0).sum(1)], 1)
 
     espacios = {"pre (vec)": pre}
-    for nombre, f in {"proporciones": lambda p, c: p,
-                      "proporciones + tamaño de la historia": lambda p, c: np.concatenate([p, extra(c)], 1),
-                      "conteos absolutos": lambda p, c: c,
-                      "log(1 + conteos)": lambda p, c: np.log1p(c),
-                      "log(1 + conteos) + tamaño": lambda p, c: np.concatenate([np.log1p(c), extra(c)], 1)}.items():
-        espacios[nombre] = {s: (pre[s][0], f(por_ids(*prop[s], pre[s][0]), por_ids(*cont[s], pre[s][0]))) for s in pre}
+    for nombre, f in {"proporciones": lambda p, c, a: p,
+                      "proporciones + tamaño de la historia": lambda p, c, a: np.concatenate([p, extra(c)], 1),
+                      "conteos absolutos": lambda p, c, a: c,
+                      "log(1 + conteos)": lambda p, c, a: np.log1p(c),
+                      "log(1 + conteos) + tamaño": lambda p, c, a: np.concatenate([np.log1p(c), extra(c)], 1),
+                      "meses y cambios por año (80 columnas)": lambda p, c, a: a,
+                      "log(1 + conteos) + tamaño + por año": lambda p, c, a: np.concatenate([np.log1p(c), extra(c), a], 1),
+                      }.items():
+        espacios[nombre] = {s: (pre[s][0], f(*(por_ids(*d[s], pre[s][0]) for d in (prop, cont, anual)))) for s in pre}
     filas: dict[str, dict] = {}
     for nombre, d in espacios.items():
         (idv, xv), (idt, xt) = d["val"], d["test"]
@@ -247,7 +266,10 @@ def seccion_conteos(entrada: Path, n_boot: int) -> str:
     texto = ["## Línea de base con conteos absolutos\n",
              "R² en test (ridge entrenada en val) de las variables continuas. Si los conteos absolutos igualan al vector "
              "`pre`, su ventaja sobre las proporciones era información de cantidad (largo de la historia, empleadores "
-             "distintos) y no de secuencia.\n",
+             "distintos) y no de secuencia. Las filas «por año» dan los meses con registro, inicios de relación y cambios de "
+             "tamaño y de rama de cada año calendario: son casi las mismas cantidades que las variables de dinámica "
+             "(cambios a 60 meses = suma de los últimos años), así que ahí el resultado es un techo para una línea de base "
+             "de conteos, no una comparación independiente.\n",
              "| espacio | " + " | ".join(sel) + " |\n|---|" + "---|" * len(sel)]
     for nombre, f in filas.items():
         texto.append(f"| {nombre} | " + " | ".join(f"{f[o]['valor']:.3f}" for o in sel) + " |")
