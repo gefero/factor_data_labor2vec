@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Crea el entorno de Python del proyecto en Mendieta. Se corre en la CABECERA (los nodos no tienen internet),
-# desde ~/labor2vec, después de sincronizar_mendieta.sh subir:
+# desde ~/labor2vec/v0, después de sincronizar_mendieta.sh subir:
 #
 #   bash scripts/cluster/entorno_mendieta.sh
 #   sbatch scripts/cluster/prueba_mendieta.sbatch     # después: verificar en un nodo con GPU

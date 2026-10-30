@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.."
 ACCION=${1:?subir | datos | bajar}
 USUARIO=${2:-grosati}
 HOST=${HOST:-mendieta.ccad.unc.edu.ar}
-DEST=${DEST:-labor2vec}          # relativo al home del cluster
+DEST=${DEST:-labor2vec/v0}          # relativo al home del cluster
 R="$USUARIO@$HOST:$DEST"
 
 case "$ACCION" in

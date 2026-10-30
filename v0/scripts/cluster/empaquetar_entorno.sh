@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Empaqueta el entorno en un solo .tar para correrlo desde el /scratch local de cada nodo. Se corre en la cabecera
-# de Mendieta, desde ~/labor2vec (lo llama entorno_mendieta.sh). Rehacerlo cada vez que cambie .venv.
+# de Mendieta, desde ~/labor2vec/v0 (lo llama entorno_mendieta.sh). Rehacerlo cada vez que cambie .venv.
 #
 # Por qué: en un nodo, `import torch` desde el /home (NFS) tardó 710 s; desde el /scratch, 4 s (skill ccad-unc,
 # lecciones §1). El paquete es UN árbol de Python: el CPython de uv con el site-packages de .venv adentro, así los

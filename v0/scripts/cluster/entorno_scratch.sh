@@ -1,4 +1,4 @@
-# Se usa con `source` dentro de un sbatch de Mendieta (desde ~/labor2vec): descomprime el entorno empaquetado por
+# Se usa con `source` dentro de un sbatch de Mendieta (desde ~/labor2vec/v0): descomprime el entorno empaquetado por
 # empaquetar_entorno.sh en el /scratch local del nodo y lo pone primero en el PATH. Slurm borra el /scratch al
 # terminar el job. Copiado de land2vec/scripts/cluster/entorno_scratch.sh.
 ENTORNO_TAR=${ENTORNO_TAR:-$PWD/entorno/py313_labor2vec.tar}

@@ -19,7 +19,7 @@
 set -euo pipefail
 CONFIG=${1:?falta CONFIG (YAML de la tarea)}
 shift 1
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"

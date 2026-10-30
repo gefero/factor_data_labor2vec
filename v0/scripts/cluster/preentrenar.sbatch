@@ -4,7 +4,7 @@
 #   sbatch --mail-type=BEGIN,END,FAIL --mail-user=CORREO -J l2v_NOMBRE [-p multi --time=1-12:00] \
 #          scripts/cluster/preentrenar.sbatch NOMBRE [--set clave=valor ...]
 #
-# NOMBRE es la carpeta de resultados (~/labor2vec/runs/NOMBRE: checkpoints, config.json, logs/ con el CSV de
+# NOMBRE es la carpeta de resultados (~/labor2vec/v0/runs/NOMBRE: checkpoints, config.json, logs/ con el CSV de
 # métricas y, al terminar, modelo_final.pt). Los checkpoints van al /home y no al /scratch, que se borra al terminar.
 # El job se reanuda solo (--reanudar): si ya existe last.ckpt retoma de ahí, así que para seguir un entrenamiento
 # cortado por el tiempo se vuelve a encolar el MISMO comando, encadenado con afterany y con nombres de job distintos:
@@ -29,7 +29,7 @@
 set -euo pipefail
 NOMBRE=${1:?falta NOMBRE (carpeta de resultados)}
 shift
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore
 echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, resultados en runs/$NOMBRE"

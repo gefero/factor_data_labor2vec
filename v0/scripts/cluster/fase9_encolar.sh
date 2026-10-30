@@ -10,7 +10,7 @@
 #   b3      intervenciones sobre la historia con los modelos t1, t3 y pre (3 jobs; cada uno hace 5 pasadas)
 #
 # Antes de encolar sube el código (NO_SUBIR=1 lo omite) y comprueba que existan todos los modelos en el cluster. `--probar`
-# sólo imprime los comandos. Los resultados quedan en ~/labor2vec/runs/fase9/. Todo job lleva aviso por mail (BEGIN, END, FAIL).
+# sólo imprime los comandos. Los resultados quedan en ~/labor2vec/v0/runs/fase9/. Todo job lleva aviso por mail (BEGIN, END, FAIL).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -53,7 +53,7 @@ if [ -z "$PROBAR" ]; then
     echo "== Comprobando los modelos en el cluster"
     for j in "${JOBS[@]}"; do
         IFS='|' read -r _ nombre _ modelo _ <<<"$j"
-        $SSH "test -s ~/labor2vec/$modelo" || { echo "NO EXISTE en el cluster: $modelo (job $nombre)" >&2; exit 1; }
+        $SSH "test -s ~/labor2vec/v0/$modelo" || { echo "NO EXISTE en el cluster: $modelo (job $nombre)" >&2; exit 1; }
     done
     [ -n "${NO_SUBIR:-}" ] || { echo "== Subiendo el código"; bash scripts/cluster/sincronizar_mendieta.sh subir "$USUARIO"; }
 fi
@@ -61,6 +61,6 @@ fi
 echo "== Encolando ($GRUPO)"
 for j in "${JOBS[@]}"; do
     IFS='|' read -r script nombre config modelo args <<<"$j"
-    cmd="cd ~/labor2vec && BASE=runs/fase9 sbatch --parsable --mail-type=BEGIN,END,FAIL --mail-user=${MAIL:-CORREO} -J f9_${script:0:3}_$nombre scripts/cluster/$script.sbatch $nombre $config $modelo $args"
+    cmd="cd ~/labor2vec/v0 && BASE=runs/fase9 sbatch --parsable --mail-type=BEGIN,END,FAIL --mail-user=${MAIL:-CORREO} -J f9_${script:0:3}_$nombre scripts/cluster/$script.sbatch $nombre $config $modelo $args"
     if [ -n "$PROBAR" ]; then echo "$cmd"; else echo "$nombre -> job $($SSH "$cmd")"; fi
 done

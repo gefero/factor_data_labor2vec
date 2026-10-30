@@ -4,7 +4,7 @@
 # Mide: (1) cuánto entrega el DataLoader con 10 cores; (2) bf16 contra fp32 con la misma semilla (1.000 pasos, lote 16,
 # el mayor que entra en fp32 con 2560 tokens, fase 0); (3) bf16 con lote 32: pasos/s y memoria pico.
 # Cada paso se registra aunque falle el anterior, pero la comprobación inicial (0) aborta todo.
-# Los resultados (CSV y config, sin checkpoints) se copian a ~/labor2vec/runs/humo_gpu_<jobid>/ al terminar.
+# Los resultados (CSV y config, sin checkpoints) se copian a ~/labor2vec/v0/runs/humo_gpu_<jobid>/ al terminar.
 #SBATCH --job-name=l2v_humo_gpu
 #SBATCH --partition=short
 #SBATCH --nodes=1
@@ -16,14 +16,14 @@
 
 . /etc/profile                          # ANTES de set -u (skill ccad-unc, lecciones §3)
 set -uo pipefail
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore
 echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 
 TRABAJO=/scratch/$USER/$SLURM_JOB_ID/runs
-DESTINO=$HOME/labor2vec/runs/humo_gpu_$SLURM_JOB_ID
+DESTINO=$HOME/labor2vec/v0/runs/humo_gpu_$SLURM_JOB_ID
 copiar() {   # también si el job falla: sin checkpoints (pesan ~100 MB cada uno)
     mkdir -p "$DESTINO" && rsync -a --exclude '*.ckpt' "$TRABAJO/" "$DESTINO/" ; echo "resultados en $DESTINO"
 }

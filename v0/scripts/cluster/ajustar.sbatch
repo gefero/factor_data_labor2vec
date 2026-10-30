@@ -3,7 +3,7 @@
 #
 #   sbatch --mail-type=BEGIN,END,FAIL --mail-user=CORREO -J t1_NOMBRE scripts/cluster/ajustar.sbatch NOMBRE CONFIG [--set clave=valor ...]
 #
-# Ejemplos (NOMBRE es la carpeta de resultados ~/labor2vec/runs/NOMBRE; CONFIG, configs/ajuste_t1.yaml o gru_t1.yaml):
+# Ejemplos (NOMBRE es la carpeta de resultados ~/labor2vec/v0/runs/NOMBRE; CONFIG, configs/ajuste_t1.yaml o gru_t1.yaml):
 #   ... ajustar.sbatch t1_l2v_s0 configs/ajuste_t1.yaml --set semilla=0
 #   ... ajustar.sbatch t1_scratch_s0 configs/ajuste_t1.yaml --set semilla=0 --set ajuste.desde_cero=true
 #   ... ajustar.sbatch t1_gru_s0 configs/gru_t1.yaml --set semilla=0
@@ -25,7 +25,7 @@ set -euo pipefail
 NOMBRE=${1:?falta NOMBRE (carpeta de resultados)}
 CONFIG=${2:?falta CONFIG (YAML)}
 shift 2
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore
 echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, resultados en runs/$NOMBRE"

@@ -4,7 +4,7 @@
 #
 #   BASE=runs/fase9 sbatch --mail-type=BEGIN,END,FAIL --mail-user=CORREO -J f9_int_NOMBRE scripts/cluster/intervenciones.sbatch NOMBRE CONFIG MODELO [args de extraer]
 #
-# Los resultados quedan en ~/labor2vec/$BASE/NOMBRE_<intervencion>/personas.npz (sólo test). El modelo sin intervención es el que ya
+# Los resultados quedan en ~/labor2vec/v0/$BASE/NOMBRE_<intervencion>/personas.npz (sólo test). El modelo sin intervención es el que ya
 # dejó la fase 7 en runs/fase7/NOMBRE. Ejemplos:
 #   ... intervenciones.sbatch t1  configs/ajuste_t1.yaml runs/t1_l2v_lr0001/modelo_final.pt
 #   ... intervenciones.sbatch t3  configs/ajuste_t3.yaml runs/t3_l2v_s0/modelo_final.pt
@@ -25,7 +25,7 @@ CONFIG=${2:?falta CONFIG (YAML)}
 MODELO=${3:?falta MODELO (modelo_final.pt)}
 shift 3
 BASE=${BASE:-runs/fase9}
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 echo "nodo $(hostname), CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, resultados en $BASE/${NOMBRE}_<intervencion>"

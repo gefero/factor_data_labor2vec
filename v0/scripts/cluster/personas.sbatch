@@ -3,7 +3,7 @@
 #
 #   sbatch --mail-type=BEGIN,END,FAIL --mail-user=CORREO -J f7_NOMBRE scripts/cluster/personas.sbatch NOMBRE CONFIG MODELO [args de extraer]
 #
-# Los resultados quedan en ~/labor2vec/$BASE/NOMBRE/{personas,saliency}.npz, con BASE=runs/fase7 por defecto (fase 9: BASE=runs/fase9;
+# Los resultados quedan en ~/labor2vec/v0/$BASE/NOMBRE/{personas,saliency}.npz, con BASE=runs/fase7 por defecto (fase 9: BASE=runs/fase9;
 # se pasa por el entorno del envío, no con --export). Ejemplos de la fase 7:
 #   ... personas.sbatch t1  configs/ajuste_t1.yaml runs/t1_l2v_lr0001/modelo_final.pt
 #   ... personas.sbatch t3  configs/ajuste_t3.yaml runs/t3_l2v_s0/modelo_final.pt
@@ -23,7 +23,7 @@ NOMBRE=${1:?falta NOMBRE (carpeta de resultados en runs/fase7)}
 CONFIG=${2:?falta CONFIG (YAML)}
 MODELO=${3:?falta MODELO (modelo_final.pt)}
 shift 3
-cd "$HOME/labor2vec"
+cd "$HOME/labor2vec/v0"
 source scripts/cluster/entorno_scratch.sh
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK PYTHONWARNINGS=ignore PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 BASE=${BASE:-runs/fase7}
