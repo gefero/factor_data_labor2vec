@@ -23,10 +23,12 @@ def main() -> None:
     ap.add_argument("corrida", type=Path)
     ap.add_argument("--lotes", type=int, default=None, help="máximo de lotes de validación (por defecto, todos)")
     ap.add_argument("--salida", type=Path, default=None)
+    ap.add_argument("--workers", type=int, default=0, help="procesos de carga (pisa `datos.num_workers` de la configuración)")
     a = ap.parse_args()
 
     cfg = json.loads((a.corrida / "config.json").read_text())
-    cfg.pop("hparams_modelo")
+    cfg.pop("hparams_modelo", None)
+    cfg["datos"]["num_workers"] = a.workers
     dm, modelo = entrenar.preparar(cfg)
     ck = torch.load(a.corrida / "modelo_final.pt", map_location="cpu", weights_only=False)
     modelo.load_state_dict(ck["state_dict"])

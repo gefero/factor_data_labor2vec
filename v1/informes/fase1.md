@@ -11,7 +11,7 @@ Generado el 2026-11-02. Plan: `plans/PLAN_v1.md`. Código en `v1/src/labor2vec/t
 - **Opciones**: `Opciones.grilla` (por defecto `False`, o sea, exactamente v0) y `Opciones.sinreg` (`"dos"` | `"uno"`, el control de la fase 5). Todas las configuraciones de `v1/configs/` traen `grilla: true`.
 - **Intervenciones de la fase 9**: la grilla se arma después de la intervención y termina donde termina la historia intervenida (`fin_de_la_historia`): con `sin_ultimo_anio` termina 12 meses antes y con `atrasar_2_anios`, 24. Sin esto, borrar el último año habría fabricado meses de salida.
 - **`DatasetPretrain.largos()`** cuenta los meses sin registro de forma vectorizada y coincide **exactamente** con el largo del documento armado (probado con y sin ventana, con `sin_ultimo_valor` y con eventos compactos, y verificado además en 5.000 trabajadores reales).
-- El `.venv` y los datos son los de v0 (ver el plan, sección 5). Las pruebas de v0 siguen valiendo: 181 pasan y 6 se saltan.
+- El `.venv` y los datos son los de v0 (ver el plan, sección 5). Las pruebas de v0 siguen valiendo: con las nuevas, 185 pasan y 6 se saltan.
 
 ## Cifras sobre el corpus real (train, ventana a 2015-12, 344.025 trabajadores)
 
@@ -63,10 +63,10 @@ Para T1 el costo de v1 es chico (+10 % en la mediana) y el contenido nuevo es la
 - **MLM**: el 27,7 % de los tokens son `SINREG`. Una vez que empieza la salida todos los meses siguientes son `SINREG_SAL`, así que enmascarar uno es casi trivial por el contexto. Habrá que mirar en la fase 2 cuánto diluyen la pérdida y, si hace falta, bajar su probabilidad de enmascarado.
 - **Pre-entrenamiento y T1 ven poblaciones distintas**: la salida es el 37 % de los meses en el pre-entrenamiento y no aparece nunca en la cohorte de T1.
 - **Análisis** (`analisis/espacio.py`, `personas.py`): construyen `Opciones` a mano o suponen eventos de 6 tokens y no consideran la grilla. Se adaptan en la fase 6, no antes de tener un modelo.
-- Los scripts de `v1/scripts/cluster/` y las rutas `~/labor2vec/...` de las configuraciones siguen apuntando a v0; se arreglan en la fase 2.
+- Los scripts de `v1/scripts/cluster/` y las rutas `~/labor2vec/...` de las configuraciones se llevaron a `~/labor2vec/v1` (2026-11-02); falta correrlos en Mendieta (piloto de la fase 2).
 
 ## Criterios de aceptación de la fase 1
 
-1. Tests en verde: ✔ (181 pasan, 6 se saltan por falta de `node`, de `panel.parquet` y de los vectores de la fase 7).
+1. Tests en verde: ✔ (185 pasan, 6 se saltan por falta de `node`, de `panel.parquet` y de los vectores de la fase 7).
 2. Informe de largos y de proporción de meses `SINREG` por tipo: ✔ (arriba).
 3. `largos()` exacto frente al documento armado: ✔.

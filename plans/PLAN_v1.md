@@ -90,7 +90,7 @@ El disco del contenedor está al 93 % (8,6 GB libres), así que v1 **no duplica 
 |---|---|---|---|
 | 0 | Crear `v1/`, enlace a los datos, correr los tests heredados de v0 | Los 166 tests de v0 pasan desde `v1/` | Correr tests |
 | 1 | Codificación con grilla: código, tests y vocabulario nuevo | Tests en verde; informe de largos (mediana, p90, p99, truncados a 2.560) y de proporción de meses `SINREG` por tipo | — |
-| 2 | Humo en CPU y piloto en Mendieta de una pasada por train | Pérdida baja; pérdida de SOP contra la referencia 1,636; reparto de la pérdida MLM entre `SINREG` y el resto | Encolar |
+| 2 | Humo en CPU y piloto en Mendieta de una pasada por train | Pérdida baja; AUC de SOP contra el control sin grilla (la referencia 1,636 de v0 vale para otros pesos de clase); reparto de la pérdida MLM entre `SINREG` y el resto. **Humo en CPU hecho (2026-11-02); falta el piloto en Mendieta** | Encolar |
 | 3 | Pre-entrenamiento de 150 épocas, semilla 0 (v0 tardó ≈ 5 h; con ~1,4 veces más tokens de media (medido en la fase 1) se estima 7-10 h, se mide en la fase 2) | Convergencia y perplejidad por categoría | Encolar |
 | 4 | Ajuste fino de T1-T4 (y T2c/T4c) con 3 semillas, GRU sobre los documentos v1, comparación con v0 y con las líneas de base de v0 | Tabla de v1 contra v0 y contra la logística con tiempo, con IC por bootstrap | Encolar |
 | 5 | Control con un solo token `SINREG` (`sinreg: uno`): ¿importa distinguir intermitencia de salida? | Misma tabla de T1-T4 | Encolar |
