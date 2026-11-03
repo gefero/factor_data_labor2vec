@@ -3,6 +3,7 @@ data/MLER.csv
 data/*.rar
 data/processed/
 v0/data/processed/
+v1/data/processed
 *.parquet
 *.csv
 

@@ -1,0 +1,210 @@
+"""Vocabulario de la MLER, ajustado sólo con train.
+
+No usa polars: su binario necesita AVX2 y los nodos de Mendieta (Ivy Bridge) no lo tienen (`Illegal instruction`
+al importarlo, 2026-10-16); este módulo está en el camino del entrenamiento. Orden de los especiales idéntico al de life2vec-light, para no tocar los `ignore_index = [0,4,5,6,7,8]` del
+backbone. Las tablas de búsqueda (`tablas`) convierten códigos crudos del corpus de eventos (con -1 = dato
+faltante) en ids de token; lo faltante pasa a [UNK].
+
+    python -m labor2vec.tokens.vocabulario
+"""
+
+from dataclasses import dataclass, field
+
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from labor2vec.utiles.duck import conectar
+from labor2vec.utiles.rutas import PANEL, RAMAS, VOCABULARIO
+
+ESPECIALES = ["[PAD]", "[CLS]", "[SEP]", "[MASK]", "[PLCH0]", "[PLCH1]", "[PLCH2]", "[PLCH3]", "[PLCH4]", "[UNK]"]
+PAD, CLS, SEP, MASK, UNK = 0, 1, 2, 3, 9
+N_ESPECIALES = len(ESPECIALES)
+
+UMBRAL_RAMA = 50       # trabajadores en train; por debajo, la rama pasa a su r32
+UMBRAL_NACIMIENTO = 100  # trabajadores en train por año de nacimiento; los extremos poco frecuentes se agrupan
+
+SEXOS = {1: "SEXO_M", 2: "SEXO_V"}  # descriptor de la MLER: 1 = Mujer, 2 = Varón
+
+# Meses sin registro (v1, plans/PLAN_v1.md): intermitencia (hay un registro posterior dentro de la ventana) y salida
+# (no hay ninguno hasta el fin de la ventana). Van al final del vocabulario, con ids 519 y 520 en la MLER, y **no se
+# guardan** en `vocabulario.parquet`: ese archivo es el de v0 (compartido por el enlace `data/processed`) y `cargar` y
+# `ajustar` los agregan.
+TOKENS_SINREG = ("SINREG_INT", "SINREG_SAL")
+CATEGORIA_SINREG = "sinreg"
+
+# Inicio de actividades de la empresa (`tr_anio_ini`, padrón de AFIP): 4 tramos (antes de 2001, 2001-05, 2006-10, después de
+# 2010). Es la edad de la EMPRESA, constante en la relación, y no la antigüedad del trabajador en ella. En v0 se llamaba
+# «antigüedad» (tokens `ANT_k`); en v1 son `EMPINI_k`. El archivo del vocabulario es el de v0 (compartido) y conserva los
+# nombres viejos: `cargar` los traduce y `guardar` los deshace.
+PREFIJO_EMPINI, CATEGORIA_EMPINI = "EMPINI_", "inicio_empresa"
+_PREFIJO_V0, _CATEGORIA_V0 = "ANT_", "antigüedad"
+
+
+@dataclass
+class Vocabulario:
+    """Tokens (id = posición en `tokens`) y mapeos de códigos crudos a tokens."""
+
+    tokens: list[str]
+    categorias: list[str]
+    frecuencias: list[int]
+    ramas: pa.Table  # r34, r32, n_trab_train, token
+    nac_min: int = 0
+    nac_max: int = 0
+    _id: dict[str, int] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self):
+        self._id = {t: i for i, t in enumerate(self.tokens)}
+
+    def __len__(self) -> int:
+        return len(self.tokens)
+
+    def id(self, token: str) -> int:
+        return self._id.get(token, UNK)
+
+    # ---- tablas de búsqueda ------------------------------------------------------------------------
+    def _lut(self, codigos: range | list[int], nombre) -> np.ndarray:
+        """Tabla indexada por `codigo + 1` (el índice 0 es el dato faltante, -1)."""
+        cods = list(codigos)
+        lut = np.full(max(cods) + 2, UNK, dtype=np.int32)
+        for c in cods:
+            lut[c + 1] = self.id(nombre(c))
+        return lut
+
+    def tablas(self) -> dict[str, np.ndarray]:
+        """LUT por variable. Se indexan con `codigo + 1`; ver `buscar`."""
+        filas = self.ramas.to_pylist()
+        rama = np.full(max(f["r34"] for f in filas) + 2, UNK, dtype=np.int32)
+        for f in filas:
+            rama[f["r34"] + 1] = self.id(f["token"])
+        provs = [int(t[5:]) for t, c in zip(self.tokens, self.categorias) if c == "provincia"]
+        return {
+            "sinreg": np.array([self.id(t) for t in TOKENS_SINREG], dtype=np.int32),  # indexada por tipo - 1
+            "rem": self._lut(range(0, 101), lambda c: f"REM_{c:03d}"),
+            "tam": self._lut(range(1, 5), lambda c: f"TAM_{c}"),
+            "rama": rama,
+            "prov": self._lut(range(0, max(provs) + 1), lambda c: f"PROV_{c:02d}"),
+            "empini": self._lut(range(1, 5), lambda c: f"{PREFIJO_EMPINI}{c}"),
+        }
+
+    def fondo(self, sexo: int, fnacim: int) -> tuple[int, int]:
+        """Ids de los dos tokens de background (sexo, año de nacimiento con los extremos agrupados)."""
+        nac = min(max(int(fnacim), self.nac_min), self.nac_max)
+        return self.id(SEXOS.get(int(sexo), "")), self.id(f"NAC_{nac}")
+
+    # ---- persistencia ------------------------------------------------------------------------------
+    def guardar(self, ruta=VOCABULARIO, ruta_ramas=RAMAS) -> None:
+        """Escribe el vocabulario sin los tokens `SINREG` (el archivo es el de v0; `cargar` los vuelve a agregar)."""
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        base = [i for i, c in enumerate(self.categorias) if c != CATEGORIA_SINREG]
+        a_v0 = {CATEGORIA_EMPINI: _CATEGORIA_V0}
+        pq.write_table(pa.table({
+            "token": pa.array([_PREFIJO_V0 + self.tokens[i][len(PREFIJO_EMPINI):] if self.categorias[i] == CATEGORIA_EMPINI
+                               else self.tokens[i] for i in base], pa.string()),
+            "id": pa.array(range(len(base)), pa.int32()),
+            "categoria": pa.array([a_v0.get(self.categorias[i], self.categorias[i]) for i in base], pa.string()),
+            "frecuencia": pa.array([self.frecuencias[i] for i in base], pa.int64())}), ruta)
+        pq.write_table(self.ramas, ruta_ramas)
+
+    @classmethod
+    def cargar(cls, ruta=VOCABULARIO, ruta_ramas=RAMAS) -> "Vocabulario":
+        v = pq.read_table(ruta).sort_by("id").to_pydict()
+        nac = [int(t[4:]) for t, c in zip(v["token"], v["categoria"]) if c == "nacimiento"]
+        tokens, cats, frec = v["token"], v["categoria"], v["frecuencia"]
+        # archivo de v0: ANT_k / «antigüedad» -> EMPINI_k / inicio_empresa
+        tokens = [PREFIJO_EMPINI + t[len(_PREFIJO_V0):] if c == _CATEGORIA_V0 else t for t, c in zip(tokens, cats)]
+        cats = [CATEGORIA_EMPINI if c == _CATEGORIA_V0 else c for c in cats]
+        if CATEGORIA_SINREG not in cats:  # el archivo de v0 no los trae
+            tokens, cats, frec = (tokens + list(TOKENS_SINREG), cats + [CATEGORIA_SINREG] * len(TOKENS_SINREG),
+                                  frec + [0] * len(TOKENS_SINREG))
+        return cls(tokens, cats, frec, pq.read_table(ruta_ramas), min(nac), max(nac))
+
+    # ---- ajuste ------------------------------------------------------------------------------------
+    @classmethod
+    def ajustar(cls, panel=PANEL, umbral_rama: int = UMBRAL_RAMA, umbral_nac: int = UMBRAL_NACIMIENTO,
+                con=None) -> "Vocabulario":
+        """Ajusta el vocabulario con los eventos de train (todo el período, sin ventana).
+
+        `panel` necesita las columnas del panel de la fase 1 (id_trabajador, pct_rem_mes, tramo_empleo, r32, r34,
+        provi, tr_anio_ini, fnacim, sexo, split). El resultado es determinista.
+        """
+        con = con or conectar()
+        base = f"(select * from read_parquet('{panel}') where split = 'train')"
+        # frecuencia de cada código crudo = cantidad de eventos de train
+        cuentas = {}
+        for nombre, col in [("rem", "pct_rem_mes"), ("tam", "tramo_empleo"), ("prov", "provi"),
+                            ("ant", "tr_anio_ini")]:
+            cuentas[nombre] = dict(con.execute(
+                f"select {col}, count(*) from {base} where {col} is not null group by 1").fetchall())
+        rama = con.execute(
+            f"select r34, any_value(r32), count(distinct id_trabajador), count(*) from {base} "
+            f"where r34 is not null group by 1 order by 1").fetchall()
+        # r34 -> r32 con todo el panel, para ramas que sólo aparecen en val/test
+        r34_r32 = dict(con.execute(
+            f"select r34, any_value(r32) from read_parquet('{panel}') where r34 is not null and r32 is not null "
+            f"group by 1").fetchall())
+        # trabajadores por año de nacimiento y sexo
+        nac = dict(con.execute(
+            f"select fnacim, count(distinct id_trabajador) from {base} where fnacim is not null group by 1"
+        ).fetchall())
+        sexo = dict(con.execute(
+            f"select sexo, count(distinct id_trabajador) from {base} where sexo is not null group by 1").fetchall())
+
+        tokens, cats, frec = list(ESPECIALES), ["especial"] * N_ESPECIALES, [0] * N_ESPECIALES
+
+        def agregar(tok, cat, f):
+            tokens.append(tok), cats.append(cat), frec.append(int(f))
+
+        for cod, nombre in sorted(SEXOS.items(), key=lambda kv: kv[1]):
+            agregar(nombre, "sexo", sexo.get(cod, 0))
+        # nacimiento: los años de los extremos con pocos trabajadores se agrupan en el primero/último frecuente
+        frecuentes = sorted(a for a, n in nac.items() if n >= umbral_nac)
+        lo, hi = frecuentes[0], frecuentes[-1]
+        for a in range(lo, hi + 1):
+            f = sum(n for b, n in nac.items() if (b == a) or (a == lo and b < lo) or (a == hi and b > hi))
+            agregar(f"NAC_{a}", "nacimiento", f)
+        for c in range(0, 101):
+            agregar(f"REM_{c:03d}", "salario", cuentas["rem"].get(c, 0))
+        for c in range(1, 5):
+            agregar(f"TAM_{c}", "tamaño", cuentas["tam"].get(c, 0))
+        # ramas: r34 con suficientes trabajadores; el resto, a su r32
+        tabla_ramas = []
+        r32_necesarias = {}
+        for r34, _, n_trab, n_ev in rama:
+            if n_trab >= umbral_rama:
+                agregar(f"RAMA_{r34}", "rama", n_ev)
+        r34_en_train = {r[0]: r for r in rama}
+        for r34 in sorted(r34_r32):
+            r32 = r34_r32[r34]
+            n_trab = r34_en_train[r34][2] if r34 in r34_en_train else 0
+            if n_trab >= umbral_rama:
+                tabla_ramas.append((r34, r32, n_trab, f"RAMA_{r34}"))
+            else:
+                r32_necesarias[r32] = r32_necesarias.get(r32, 0) + (r34_en_train[r34][3] if r34 in r34_en_train else 0)
+                tabla_ramas.append((r34, r32, n_trab, f"RAMA2_{r32}"))
+        for r32 in sorted(r32_necesarias):
+            agregar(f"RAMA2_{r32}", "rama2", r32_necesarias[r32])
+        for c in sorted(cuentas["prov"]):
+            agregar(f"PROV_{c:02d}", "provincia", cuentas["prov"][c])
+        for c in range(1, 5):
+            agregar(f"{PREFIJO_EMPINI}{c}", CATEGORIA_EMPINI, cuentas["ant"].get(c, 0))
+        for t in TOKENS_SINREG:  # frecuencia 0: los meses sin registro no están en el panel, se derivan al armar el documento
+            agregar(t, CATEGORIA_SINREG, 0)
+
+        ramas = pa.table({
+            "r34": pa.array([f[0] for f in tabla_ramas], pa.int32()),
+            "r32": pa.array([f[1] for f in tabla_ramas], pa.int32()),
+            "n_trab_train": pa.array([f[2] for f in tabla_ramas], pa.int64()),
+            "token": pa.array([f[3] for f in tabla_ramas], pa.string())})
+        return cls(tokens, cats, frec, ramas, lo, hi)
+
+
+def main() -> None:
+    v = Vocabulario.ajustar()
+    v.guardar()
+    resumen = {c: v.categorias.count(c) for c in dict.fromkeys(v.categorias)}
+    print(f"{len(v)} tokens -> {VOCABULARIO}\n{resumen}")
+
+
+if __name__ == "__main__":
+    main()

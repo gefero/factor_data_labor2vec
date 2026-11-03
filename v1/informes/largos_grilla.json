@@ -1,0 +1,53 @@
+{
+  "trabajadores": 344025,
+  "tokens_eventos_v0": {
+    "mediana": 264.0,
+    "p90": 1152.0,
+    "p99": 1452.0,
+    "media": 426.13783300632224,
+    "max": 7314,
+    "sobre_2560": 0.0011946806191410508
+  },
+  "tokens_eventos_v1": {
+    "mediana": 508.0,
+    "p90": 1228.0,
+    "p99": 1462.0,
+    "media": 589.4938158564058,
+    "max": 7316,
+    "sobre_2560": 0.0012440956325848412
+  },
+  "razon_mediana_v1_v0": 1.9242424242424243,
+  "meses_grilla_mediana": 154.0,
+  "meses_sinreg_mediana": 63.0,
+  "meses_sinreg_media": 81.67799142504178,
+  "proporcion_meses_sinreg": 0.5422775045702539,
+  "proporcion_meses_int": 0.17008836245564524,
+  "proporcion_meses_sal": 0.3721891421146087,
+  "trabajadores_con_algun_int": 0.5868294455344815,
+  "trabajadores_con_sal_al_final": 0.62486156529322,
+  "trabajadores_que_empiezan_en_1996_01": 0.1988372938013226,
+  "tokens_sinreg_sobre_total_v1": 0.2771122927095732,
+  "verificados": 5000,
+  "cohorte_t1": {
+    "trabajadores": 85852,
+    "tokens_eventos_v0": {
+      "mediana": 732.0,
+      "p90": 1428.0,
+      "p99": 1764.0,
+      "media": 796.8298700088525,
+      "max": 7290,
+      "sobre_2560": 0.0027605646927270186
+    },
+    "tokens_eventos_v1": {
+      "mediana": 802.0,
+      "p90": 1436.0,
+      "p99": 1782.0,
+      "media": 850.1107953221824,
+      "max": 7292,
+      "sobre_2560": 0.0028770442156268927
+    },
+    "proporcion_meses_sinreg": 0.17175607172410312,
+    "con_sal_al_final": 0.0,
+    "con_algun_int": 0.6520989610026557
+  }
+}
