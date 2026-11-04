@@ -31,6 +31,8 @@ La validación mejora hasta el final y se aplana en los últimos 5.000 pasos (ca
 | Recall del SOP (normal / invertido / mezclado) | 0,91 / 0,39 / 0,63 | **0,95 / 0,57 / 0,67** |
 | Perplejidad del MLM | 4,73 | 3,95 *no comparable: el 23 % de los objetivos de v1 son `SINREG`, casi gratis* |
 
+> **Corrección (2026-11-03, noche; `fase3_evaluacion.md`, sección 6):** la mejora del SOP de v1 se debe a un atajo (un `SINREG` fuera de lugar delata el 35 % de los documentos alterados). Sin el atajo, v1 rinde como v0 (AUC pareada 0,782 contra 0,759-0,776 de tres semillas de v0). Además, sobre los mismos casos tapados, la diferencia del MLM es +0,11 nats (no +0,18) y diez veces el ruido de semilla.
+
 El SOP es comparable (mismas clases, mismos pesos) y v1 lo resuelve mejor. Hay que tener presente que en v1 el SOP permuta sólo bloques del mismo largo, así que no es la misma tarea que en v0: puede ser más fácil o más difícil; no es un resultado de v1 «mejor» sin más.
 
 ## Pérdida del MLM por categoría, sobre los mismos trabajadores
